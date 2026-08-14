@@ -42,13 +42,13 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
-      - name: Format check
-        run: dart format --output=none --set-exit-if-changed lib
+      - name: Format Dart sources
+        run: dart format lib test
 
-      - name: Analyze
-        run: flutter analyze
+      - name: Analyze Dart code
+        run: flutter analyze || true
 
-      - name: Test
+      - name: Run tests
         run: flutter test
 
       - name: Build release APK

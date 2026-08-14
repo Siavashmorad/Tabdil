@@ -27,29 +27,35 @@ python3 - <<'PY'
 from pathlib import Path
 import re
 
-mapping = {
-    'main.dart': 'package:crypto_trader/main.dart',
-    'trading_controller.dart': 'package:crypto_trader/services/trading_controller.dart',
-    'tabdeal_api_service.dart': 'package:crypto_trader/core/api/tabdeal_api_service.dart',
-    'signal_engine.dart': 'package:crypto_trader/core/analysis/signal_engine.dart',
-    'indicators.dart': 'package:crypto_trader/core/analysis/indicators.dart',
-    'market_structure.dart': 'package:crypto_trader/core/analysis/market_structure.dart',
-    'candlestick_patterns.dart': 'package:crypto_trader/core/analysis/candlestick_patterns.dart',
-    'backtester.dart': 'package:crypto_trader/core/analysis/backtester.dart',
-    'candle.dart': 'package:crypto_trader/core/models/candle.dart',
-    'trade_signal.dart': 'package:crypto_trader/core/models/trade_signal.dart',
-    'order_models.dart': 'package:crypto_trader/core/models/order_models.dart',
-    'risk_manager.dart': 'package:crypto_trader/core/risk/risk_manager.dart',
-    'candlestick_chart.dart': 'package:crypto_trader/core/widgets/candlestick_chart.dart',
-    'dashboard_screen.dart': 'package:crypto_trader/screens/dashboard/dashboard_screen.dart',
-    'trading_screen.dart': 'package:crypto_trader/screens/trading/trading_screen.dart',
-    'portfolio_screen.dart': 'package:crypto_trader/screens/portfolio/portfolio_screen.dart',
-    'settings_screen.dart': 'package:crypto_trader/screens/settings/settings_screen.dart',
-    'analysis_detail_screen.dart': 'package:crypto_trader/screens/analysis/analysis_detail_screen.dart',
-}
-pattern = re.compile(r"(['\"])([^'\"]+\.dart)\1")
+# The source files are kept at repository root. Normalize their imports after
+# copying so every Dart file uses the canonical package namespace.
 for path in Path('lib').rglob('*.dart'):
     text = path.read_text(encoding='utf-8')
+    # Normalize the known legacy relative import of order_models in risk_manager.
+    if path.name == 'risk_manager.dart':
+        text = text.replace("import '../models/order_models.dart';", "import 'package:crypto_trader/core/models/order_models.dart';")
+
+    mapping = {
+        'main.dart': 'package:crypto_trader/main.dart',
+        'trading_controller.dart': 'package:crypto_trader/services/trading_controller.dart',
+        'tabdeal_api_service.dart': 'package:crypto_trader/core/api/tabdeal_api_service.dart',
+        'signal_engine.dart': 'package:crypto_trader/core/analysis/signal_engine.dart',
+        'indicators.dart': 'package:crypto_trader/core/analysis/indicators.dart',
+        'market_structure.dart': 'package:crypto_trader/core/analysis/market_structure.dart',
+        'candlestick_patterns.dart': 'package:crypto_trader/core/analysis/candlestick_patterns.dart',
+        'backtester.dart': 'package:crypto_trader/core/analysis/backtester.dart',
+        'candle.dart': 'package:crypto_trader/core/models/candle.dart',
+        'trade_signal.dart': 'package:crypto_trader/core/models/trade_signal.dart',
+        'order_models.dart': 'package:crypto_trader/core/models/order_models.dart',
+        'risk_manager.dart': 'package:crypto_trader/core/risk/risk_manager.dart',
+        'candlestick_chart.dart': 'package:crypto_trader/core/widgets/candlestick_chart.dart',
+        'dashboard_screen.dart': 'package:crypto_trader/screens/dashboard/dashboard_screen.dart',
+        'trading_screen.dart': 'package:crypto_trader/screens/trading/trading_screen.dart',
+        'portfolio_screen.dart': 'package:crypto_trader/screens/portfolio/portfolio_screen.dart',
+        'settings_screen.dart': 'package:crypto_trader/screens/settings/settings_screen.dart',
+        'analysis_detail_screen.dart': 'package:crypto_trader/screens/analysis/analysis_detail_screen.dart',
+    }
+    pattern = re.compile(r"(['\"])([^'\"]+\.dart)\1")
     def replace(match):
         q, uri = match.groups()
         if uri.startswith(('dart:', 'flutter:', 'package:')):
@@ -59,23 +65,15 @@ for path in Path('lib').rglob('*.dart'):
     path.write_text(pattern.sub(replace, text), encoding='utf-8')
 
 required = [
-    'lib/main.dart',
-    'lib/services/trading_controller.dart',
-    'lib/core/api/tabdeal_api_service.dart',
-    'lib/core/analysis/signal_engine.dart',
-    'lib/core/analysis/indicators.dart',
-    'lib/core/analysis/market_structure.dart',
-    'lib/core/analysis/candlestick_patterns.dart',
-    'lib/core/analysis/backtester.dart',
-    'lib/core/models/candle.dart',
-    'lib/core/models/trade_signal.dart',
-    'lib/core/models/order_models.dart',
-    'lib/core/risk/risk_manager.dart',
+    'lib/main.dart', 'lib/services/trading_controller.dart',
+    'lib/core/api/tabdeal_api_service.dart', 'lib/core/analysis/signal_engine.dart',
+    'lib/core/analysis/indicators.dart', 'lib/core/analysis/market_structure.dart',
+    'lib/core/analysis/candlestick_patterns.dart', 'lib/core/analysis/backtester.dart',
+    'lib/core/models/candle.dart', 'lib/core/models/trade_signal.dart',
+    'lib/core/models/order_models.dart', 'lib/core/risk/risk_manager.dart',
     'lib/core/widgets/candlestick_chart.dart',
-    'lib/screens/dashboard/dashboard_screen.dart',
-    'lib/screens/trading/trading_screen.dart',
-    'lib/screens/portfolio/portfolio_screen.dart',
-    'lib/screens/settings/settings_screen.dart',
+    'lib/screens/dashboard/dashboard_screen.dart', 'lib/screens/trading/trading_screen.dart',
+    'lib/screens/portfolio/portfolio_screen.dart', 'lib/screens/settings/settings_screen.dart',
     'lib/screens/analysis/analysis_detail_screen.dart',
 ]
 missing = [p for p in required if not Path(p).is_file()]

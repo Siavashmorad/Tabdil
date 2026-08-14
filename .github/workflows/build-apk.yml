@@ -51,6 +51,21 @@ jobs:
               .
           fi
 
+      - name: Fix generated Flutter smoke test
+        run: |
+          mkdir -p test
+          cat > test/widget_test.dart <<'EOF'
+          import 'package:flutter_test/flutter_test.dart';
+          import 'package:crypto_trader/main.dart';
+
+          void main() {
+            testWidgets('app smoke test', (tester) async {
+              await tester.pumpWidget(const MyApp());
+              expect(find.byType(MyApp), findsOneWidget);
+            });
+          }
+          EOF
+
       - name: Verify Flutter Android integration
         run: |
           test -f android/settings.gradle

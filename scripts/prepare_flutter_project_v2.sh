@@ -27,68 +27,84 @@ python3 - <<'PY'
 from pathlib import Path
 import re
 
-# The source files are kept at repository root. Normalize their imports after
-# copying so every Dart file uses the canonical package namespace.
-for path in Path('lib').rglob('*.dart'):
+PACKAGE = 'crypto_trader'
+root = Path('lib').resolve()
+
+# Canonical destination for every source file copied into lib/.
+files = {
+    'main.dart': 'main.dart',
+    'trading_controller.dart': 'services/trading_controller.dart',
+    'tabdeal_api_service.dart': 'core/api/tabdeal_api_service.dart',
+    'signal_engine.dart': 'core/analysis/signal_engine.dart',
+    'indicators.dart': 'core/analysis/indicators.dart',
+    'market_structure.dart': 'core/analysis/market_structure.dart',
+    'candlestick_patterns.dart': 'core/analysis/candlestick_patterns.dart',
+    'backtester.dart': 'core/analysis/backtester.dart',
+    'candle.dart': 'core/models/candle.dart',
+    'trade_signal.dart': 'core/models/trade_signal.dart',
+    'order_models.dart': 'core/models/order_models.dart',
+    'risk_manager.dart': 'core/risk/risk_manager.dart',
+    'candlestick_chart.dart': 'core/widgets/candlestick_chart.dart',
+    'dashboard_screen.dart': 'screens/dashboard/dashboard_screen.dart',
+    'trading_screen.dart': 'screens/trading/trading_screen.dart',
+    'portfolio_screen.dart': 'screens/portfolio/portfolio_screen.dart',
+    'settings_screen.dart': 'screens/settings/settings_screen.dart',
+    'analysis_detail_screen.dart': 'screens/analysis/analysis_detail_screen.dart',
+}
+by_name = {name: root / rel for name, rel in files.items()}
+
+# Convert every local/root-relative Dart URI by resolving it from the importing
+# file first. This is intentionally path-aware: '../models/candle.dart' from
+# core/analysis/signal_engine.dart resolves to core/models/candle.dart, while
+# 'services/trading_controller.dart' from main.dart resolves to services/....
+uri_re = re.compile(r"(?P<q>['\"])(?P<uri>[^'\"]+\.dart)(?P=q)")
+import_re = re.compile(r"^(?P<prefix>\s*(?:import|export|part)\s+)(?P<uri>['\"])(?P<path>[^'\"]+\.dart)(?P=uri)")
+
+for path in root.rglob('*.dart'):
     text = path.read_text(encoding='utf-8')
-    # Normalize the known legacy relative import of order_models in risk_manager.
-    if path.name == 'risk_manager.dart':
-        text = text.replace("import '../models/order_models.dart';", "import 'package:crypto_trader/core/models/order_models.dart';")
-
-    mapping = {
-        'main.dart': 'package:crypto_trader/main.dart',
-        'trading_controller.dart': 'package:crypto_trader/services/trading_controller.dart',
-        'tabdeal_api_service.dart': 'package:crypto_trader/core/api/tabdeal_api_service.dart',
-        'signal_engine.dart': 'package:crypto_trader/core/analysis/signal_engine.dart',
-        'indicators.dart': 'package:crypto_trader/core/analysis/indicators.dart',
-        'market_structure.dart': 'package:crypto_trader/core/analysis/market_structure.dart',
-        'candlestick_patterns.dart': 'package:crypto_trader/core/analysis/candlestick_patterns.dart',
-        'backtester.dart': 'package:crypto_trader/core/analysis/backtester.dart',
-        'candle.dart': 'package:crypto_trader/core/models/candle.dart',
-        'trade_signal.dart': 'package:crypto_trader/core/models/trade_signal.dart',
-        'order_models.dart': 'package:crypto_trader/core/models/order_models.dart',
-        'risk_manager.dart': 'package:crypto_trader/core/risk/risk_manager.dart',
-        'candlestick_chart.dart': 'package:crypto_trader/core/widgets/candlestick_chart.dart',
-        'dashboard_screen.dart': 'package:crypto_trader/screens/dashboard/dashboard_screen.dart',
-        'trading_screen.dart': 'package:crypto_trader/screens/trading/trading_screen.dart',
-        'portfolio_screen.dart': 'package:crypto_trader/screens/portfolio/portfolio_screen.dart',
-        'settings_screen.dart': 'package:crypto_trader/screens/settings/settings_screen.dart',
-        'analysis_detail_screen.dart': 'package:crypto_trader/screens/analysis/analysis_detail_screen.dart',
-    }
-    pattern = re.compile(r"(['\"])([^'\"]+\.dart)\1")
-    def replace(match):
-        q, uri = match.groups()
+    out = []
+    for line in text.splitlines(keepends=True):
+        m = import_re.match(line)
+        if not m:
+            out.append(line)
+            continue
+        uri = m.group('path')
         if uri.startswith(('dart:', 'flutter:', 'package:')):
-            return match.group(0)
-        target = mapping.get(uri.rsplit('/', 1)[-1])
-        return f'{q}{target}{q}' if target else match.group(0)
-    path.write_text(pattern.sub(replace, text), encoding='utf-8')
+            out.append(line)
+            continue
 
-required = [
-    'lib/main.dart', 'lib/services/trading_controller.dart',
-    'lib/core/api/tabdeal_api_service.dart', 'lib/core/analysis/signal_engine.dart',
-    'lib/core/analysis/indicators.dart', 'lib/core/analysis/market_structure.dart',
-    'lib/core/analysis/candlestick_patterns.dart', 'lib/core/analysis/backtester.dart',
-    'lib/core/models/candle.dart', 'lib/core/models/trade_signal.dart',
-    'lib/core/models/order_models.dart', 'lib/core/risk/risk_manager.dart',
-    'lib/core/widgets/candlestick_chart.dart',
-    'lib/screens/dashboard/dashboard_screen.dart', 'lib/screens/trading/trading_screen.dart',
-    'lib/screens/portfolio/portfolio_screen.dart', 'lib/screens/settings/settings_screen.dart',
-    'lib/screens/analysis/analysis_detail_screen.dart',
-]
-missing = [p for p in required if not Path(p).is_file()]
+        candidate = (path.parent / uri).resolve() if uri.startswith('.') else (root / uri).resolve()
+        target = candidate if candidate.is_file() and str(candidate).startswith(str(root) + '/') else None
+        if target is None:
+            target = by_name.get(Path(uri).name)
+
+        if target is not None and target.is_file():
+            rel = target.relative_to(root).as_posix()
+            new_uri = f'package:{PACKAGE}/{rel}'
+            start, end = m.span('path')
+            line = line[:start] + new_uri + line[end:]
+        out.append(line)
+    path.write_text(''.join(out), encoding='utf-8')
+
+required = [root / rel for rel in files.values()]
+missing = [str(p.relative_to(root)) for p in required if not p.is_file()]
 if missing:
     raise SystemExit('Missing generated source(s): ' + ', '.join(missing))
 
+# Fail early if any local Dart URI survived. This catches exactly the class of
+# failures that previously produced hundreds of cascading analyzer errors.
 remaining = []
-for path in Path('lib').rglob('*.dart'):
+for path in root.rglob('*.dart'):
     for line_no, line in enumerate(path.read_text(encoding='utf-8').splitlines(), 1):
-        if re.search(r"^\s*(?:import|export|part)\s+['\"](?:\.\.?/|[^:/'\"]+\.dart)", line):
-            remaining.append(f'{path}:{line_no}: {line.strip()}')
+        m = import_re.match(line)
+        if m and not m.group('path').startswith(('dart:', 'flutter:', 'package:')):
+            remaining.append(f'{path.relative_to(root)}:{line_no}: {line.strip()}')
 if remaining:
     print('Unnormalized local Dart imports:')
     print('\n'.join(remaining))
     raise SystemExit(1)
+
+print('Flutter source tree prepared; all local Dart imports resolved to package paths.')
 PY
 
-echo 'Flutter source tree prepared; all local Dart imports normalized to package paths.'
+echo 'Flutter source tree prepared successfully.'

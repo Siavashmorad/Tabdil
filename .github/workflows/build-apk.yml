@@ -8,13 +8,12 @@ on:
     branches: [main, master, 'fix/**']
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
     name: Build app-release.apk
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -32,11 +31,14 @@ jobs:
           flutter-version: '3.24.0'
           cache: true
 
-      - name: Prepare standard Flutter source tree
-        run: bash scripts/prepare_flutter_project.sh
+      - name: Prepare canonical Flutter source tree
+        run: bash scripts/prepare_flutter_project_v2.sh
 
-      - name: Generate Android platform
-        run: flutter create --platforms=android --org com.tabdealtrader --project-name tabdil .
+      - name: Generate Android platform only when missing
+        run: |
+          if [ ! -d android ]; then
+            flutter create --platforms=android --org com.tabdealtrader --project-name tabdil .
+          fi
 
       - name: Enable core library desugaring
         run: python3 patch_android_desugaring.py
@@ -56,23 +58,9 @@ jobs:
       - name: Build release APK
         run: flutter build apk --release
 
-      - name: Copy APK to dist
-        run: |
-          mkdir -p dist
-          cp build/app/outputs/flutter-apk/app-release.apk dist/app-release.apk
-
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: app-release-apk
-          path: dist/app-release.apk
+          path: build/app/outputs/flutter-apk/app-release.apk
           retention-days: 30
-
-      - name: Create prerelease on main/master
-        if: github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master')
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: build-${{ github.run_number }}
-          name: Auto build #${{ github.run_number }}
-          files: dist/app-release.apk
-          prerelease: true

@@ -40,14 +40,23 @@ jobs:
       - name: Prepare canonical Flutter source tree
         run: bash scripts/prepare_flutter_project_v2.sh
 
-      - name: Prepare Android platform without touching Dart source
+      - name: Prepare Android platform in repository root
         run: |
           if [ ! -d android ]; then
-            tmpdir="$(mktemp -d)"
-            trap 'rm -rf "$tmpdir"' EXIT
-            flutter create --platforms=android --org com.tabdealtrader --project-name tabdil "$tmpdir"
-            cp -R "$tmpdir/android" ./android
+            flutter create \
+              --platforms=android \
+              --org com.tabdealtrader \
+              --project-name tabdil \
+              --no-pub \
+              .
           fi
+
+      - name: Verify Flutter Android integration
+        run: |
+          test -f android/settings.gradle
+          test -f android/app/build.gradle
+          grep -q "dev.flutter.flutter-gradle-plugin" android/app/build.gradle
+          grep -q "flutter.compileSdkVersion" android/app/build.gradle
 
       - name: Enable core library desugaring
         run: python3 patch_android_desugaring.py

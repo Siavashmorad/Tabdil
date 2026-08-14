@@ -1,15 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Rebuild lib/ from the canonical Dart sources stored at repository root.
-# The root files are the source of truth; generated Android files are handled
-# separately by CI and never overwrite Dart sources.
 rm -rf lib
-mkdir -p \
-  lib/core/api lib/core/analysis lib/core/models lib/core/risk lib/core/widgets \
-  lib/services \
-  lib/screens/dashboard lib/screens/trading lib/screens/portfolio \
-  lib/screens/settings lib/screens/analysis
+mkdir -p lib/core/{api,analysis,models,risk,widgets} lib/services lib/screens/{dashboard,trading,portfolio,settings,analysis}
 
 cp main.dart lib/main.dart
 cp trading_controller.dart lib/services/trading_controller.dart
@@ -30,10 +23,7 @@ cp portfolio_screen.dart lib/screens/portfolio/portfolio_screen.dart
 cp settings_screen.dart lib/screens/settings/settings_screen.dart
 cp analysis_detail_screen.dart lib/screens/analysis/analysis_detail_screen.dart
 
-# Normalize every local Dart import to a package import.  Do this by basename
-# rather than relative depth, because the canonical sources live at repo root
-# while their Flutter destinations are nested below lib/.
-python3 <<'PY'
+python3 - <<'PY'
 from pathlib import Path
 import re
 
@@ -57,26 +47,18 @@ mapping = {
     'settings_screen.dart': 'package:crypto_trader/screens/settings/settings_screen.dart',
     'analysis_detail_screen.dart': 'package:crypto_trader/screens/analysis/analysis_detail_screen.dart',
 }
-
-# Match the complete quoted URI inside import/export/part directives.
-uri_re = re.compile(r"(['\"])([^'\"]+\.dart)\1")
-
+pattern = re.compile(r"(['\"])([^'\"]+\.dart)\1")
 for path in Path('lib').rglob('*.dart'):
     text = path.read_text(encoding='utf-8')
-
-    def normalize(match):
-        quote, uri = match.groups()
-        # Keep SDK, Flutter and already-canonical package imports untouched.
+    def replace(match):
+        q, uri = match.groups()
         if uri.startswith(('dart:', 'flutter:', 'package:')):
             return match.group(0)
-        filename = uri.rsplit('/', 1)[-1]
-        target = mapping.get(filename)
-        return f'{quote}{target}{quote}' if target else match.group(0)
+        target = mapping.get(uri.rsplit('/', 1)[-1])
+        return f'{q}{target}{q}' if target else match.group(0)
+    path.write_text(pattern.sub(replace, text), encoding='utf-8')
 
-    updated = uri_re.sub(normalize, text)
-    path.write_text(updated, encoding='utf-8')
-
-required = (
+required = [
     'lib/main.dart',
     'lib/services/trading_controller.dart',
     'lib/core/api/tabdeal_api_service.dart',
@@ -95,13 +77,11 @@ required = (
     'lib/screens/portfolio/portfolio_screen.dart',
     'lib/screens/settings/settings_screen.dart',
     'lib/screens/analysis/analysis_detail_screen.dart',
-)
+]
+missing = [p for p in required if not Path(p).is_file()]
+if missing:
+    raise SystemExit('Missing generated source(s): ' + ', '.join(missing))
 
-for file in required:
-    if not Path(file).is_file():
-        raise SystemExit(f'Missing generated source: {file}')
-
-# Fail early if a local import to one of the canonical project files remains.
 remaining = []
 for path in Path('lib').rglob('*.dart'):
     for line_no, line in enumerate(path.read_text(encoding='utf-8').splitlines(), 1):
@@ -111,5 +91,6 @@ if remaining:
     print('Unnormalized local Dart imports:')
     print('\n'.join(remaining))
     raise SystemExit(1)
+PY
 
 echo 'Flutter source tree prepared; all local Dart imports normalized to package paths.'

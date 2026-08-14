@@ -50,9 +50,6 @@ CANONICAL = {
     'analysis_detail_screen.dart': 'screens/analysis/analysis_detail_screen.dart',
 }
 
-# Only touch URIs belonging to import/export/part directives. This avoids
-# accidentally rewriting ordinary string literals while handling every form
-# of relative URI (../x.dart, ../../x.dart, services/x.dart, etc.).
 directive = re.compile(
     r"(?m)^(?P<prefix>\s*(?:import|export|part(?:\s+of)?)\s+)"
     r"(?P<quote>['\"])(?P<uri>[^'\"]+)(?P=quote)(?P<suffix>[^;]*;?)"
@@ -62,27 +59,24 @@ changed = 0
 for path in root.rglob('*.dart'):
     text = path.read_text(encoding='utf-8')
     def repl(m):
-        global changed
+        nonlocal_changed = None
         uri = m.group('uri')
         if uri.startswith(('dart:', 'flutter:', 'package:')):
             return m.group(0)
         destination = CANONICAL.get(Path(uri).name)
         if destination is None or not uri.endswith('.dart'):
             return m.group(0)
+        global changed
         changed += 1
         return f"{m.group('prefix')}{m.group('quote')}package:{PACKAGE}/{destination}{m.group('quote')}{m.group('suffix')}"
     rewritten = directive.sub(repl, text)
     path.write_text(rewritten, encoding='utf-8')
 
-# The screen classes are not all guaranteed to have const constructors in the
-# original source. A runtime list is correct and removes a cascading const error.
 main = root / 'main.dart'
 main_text = main.read_text(encoding='utf-8')
 main_text = main_text.replace('static const _screens = [', 'static final _screens = [')
 main.write_text(main_text, encoding='utf-8')
 
-# Hard validation: no generated Dart file may retain a project-local URI for a
-# source file we know exists in the canonical tree.
 remaining = []
 for path in root.rglob('*.dart'):
     for line_no, line in enumerate(path.read_text(encoding='utf-8').splitlines(), 1):
@@ -103,4 +97,10 @@ if missing:
 print(f'Canonical Flutter source tree prepared; normalized {changed} local Dart import(s).')
 PY
 
-echo 'Flutter source tree prepared successfully.'
+# The repository stores the original Dart sources at the repository root as
+# staging inputs. They must not remain in the package root, otherwise
+# `flutter analyze` analyzes them too and reports their obsolete relative
+# imports in addition to the canonical lib/ tree.
+find . -maxdepth 1 -type f -name '*.dart' -delete
+
+echo 'Flutter source tree prepared successfully; legacy root Dart sources removed from analysis.'

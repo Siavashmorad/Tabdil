@@ -28,9 +28,8 @@ from pathlib import Path
 import re
 
 PACKAGE = 'crypto_trader'
-root = Path('lib').resolve()
+root = Path('lib')
 
-# Canonical destination for every source file copied into lib/.
 files = {
     'main.dart': 'main.dart',
     'trading_controller.dart': 'services/trading_controller.dart',
@@ -51,60 +50,49 @@ files = {
     'settings_screen.dart': 'screens/settings/settings_screen.dart',
     'analysis_detail_screen.dart': 'screens/analysis/analysis_detail_screen.dart',
 }
-by_name = {name: root / rel for name, rel in files.items()}
 
-# Convert every local/root-relative Dart URI by resolving it from the importing
-# file first. This is intentionally path-aware: '../models/candle.dart' from
-# core/analysis/signal_engine.dart resolves to core/models/candle.dart, while
-# 'services/trading_controller.dart' from main.dart resolves to services/....
-uri_re = re.compile(r"(?P<q>['\"])(?P<uri>[^'\"]+\.dart)(?P=q)")
-import_re = re.compile(r"^(?P<prefix>\s*(?:import|export|part)\s+)(?P<uri>['\"])(?P<path>[^'\"]+\.dart)(?P=uri)")
+line_re = re.compile(r"^(\s*(?:import|export|part)\s+['\"])([^'\"]+\.dart)(['\"])(.*)$")
 
 for path in root.rglob('*.dart'):
-    text = path.read_text(encoding='utf-8')
-    out = []
-    for line in text.splitlines(keepends=True):
-        m = import_re.match(line)
+    output = []
+    changed = False
+    for raw in path.read_text(encoding='utf-8').splitlines(keepends=True):
+        newline = '\n' if raw.endswith('\n') else ''
+        line = raw[:-1] if newline else raw
+        m = line_re.match(line)
         if not m:
-            out.append(line)
+            output.append(raw)
             continue
-        uri = m.group('path')
+        prefix, uri, quote, suffix = m.groups()
         if uri.startswith(('dart:', 'flutter:', 'package:')):
-            out.append(line)
+            output.append(raw)
             continue
-
-        candidate = (path.parent / uri).resolve() if uri.startswith('.') else (root / uri).resolve()
-        target = candidate if candidate.is_file() and str(candidate).startswith(str(root) + '/') else None
-        if target is None:
-            target = by_name.get(Path(uri).name)
-
-        if target is not None and target.is_file():
-            rel = target.relative_to(root).as_posix()
-            new_uri = f'package:{PACKAGE}/{rel}'
-            start, end = m.span('path')
-            line = line[:start] + new_uri + line[end:]
-        out.append(line)
-    path.write_text(''.join(out), encoding='utf-8')
+        destination = files.get(Path(uri).name)
+        if destination:
+            output.append(f'{prefix}package:{PACKAGE}/{destination}{quote}{suffix}{newline}')
+            changed = True
+        else:
+            output.append(raw)
+    if changed:
+        path.write_text(''.join(output), encoding='utf-8')
 
 required = [root / rel for rel in files.values()]
-missing = [str(p.relative_to(root)) for p in required if not p.is_file()]
+missing = [str(p) for p in required if not p.is_file()]
 if missing:
     raise SystemExit('Missing generated source(s): ' + ', '.join(missing))
 
-# Fail early if any local Dart URI survived. This catches exactly the class of
-# failures that previously produced hundreds of cascading analyzer errors.
 remaining = []
 for path in root.rglob('*.dart'):
     for line_no, line in enumerate(path.read_text(encoding='utf-8').splitlines(), 1):
-        m = import_re.match(line)
-        if m and not m.group('path').startswith(('dart:', 'flutter:', 'package:')):
-            remaining.append(f'{path.relative_to(root)}:{line_no}: {line.strip()}')
+        m = line_re.match(line)
+        if m and not m.group(2).startswith(('dart:', 'flutter:', 'package:')):
+            remaining.append(f'{path}:{line_no}: {line.strip()}')
 if remaining:
     print('Unnormalized local Dart imports:')
     print('\n'.join(remaining))
     raise SystemExit(1)
 
-print('Flutter source tree prepared; all local Dart imports resolved to package paths.')
+print('Flutter source tree prepared; all local Dart imports canonicalized to package paths.')
 PY
 
 echo 'Flutter source tree prepared successfully.'

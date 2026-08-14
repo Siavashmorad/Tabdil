@@ -34,10 +34,15 @@ jobs:
       - name: Prepare canonical Flutter source tree
         run: bash scripts/prepare_flutter_project_v2.sh
 
-      - name: Generate Android platform only when missing
+      - name: Prepare Android platform without touching Dart source
         run: |
           if [ ! -d android ]; then
+            tmpdir="$(mktemp -d)"
+            cd "$tmpdir"
             flutter create --platforms=android --org com.tabdealtrader --project-name tabdil .
+            cd - >/dev/null
+            cp -R "$tmpdir/android" ./android
+            rm -rf "$tmpdir"
           fi
 
       - name: Enable core library desugaring

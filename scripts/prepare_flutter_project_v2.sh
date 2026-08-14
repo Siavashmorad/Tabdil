@@ -29,10 +29,6 @@ import re
 
 PACKAGE = 'crypto_trader'
 root = Path('lib')
-
-# Canonical destination for every project-local Dart source generated above.
-# Matching by basename is intentional: all source files in this generated tree
-# are unique by basename and the original files are flattened at repository root.
 CANONICAL = {
     'main.dart': 'main.dart',
     'trading_controller.dart': 'services/trading_controller.dart',
@@ -54,51 +50,57 @@ CANONICAL = {
     'analysis_detail_screen.dart': 'screens/analysis/analysis_detail_screen.dart',
 }
 
-# Replace the URI itself, independently of how many ../ segments were present.
-# This also handles imports such as "services/foo.dart" from main.dart.
-uri_pattern = re.compile(r"(?P<quote>['\"])(?P<uri>[^'\"]+\.dart)(?P=quote)")
+# Only touch URIs belonging to import/export/part directives. This avoids
+# accidentally rewriting ordinary string literals while handling every form
+# of relative URI (../x.dart, ../../x.dart, services/x.dart, etc.).
+directive = re.compile(
+    r"(?m)^(?P<prefix>\s*(?:import|export|part(?:\s+of)?)\s+)"
+    r"(?P<quote>['\"])(?P<uri>[^'\"]+)(?P=quote)(?P<suffix>[^;]*;?)"
+)
 
-def rewrite(text: str) -> tuple[str, int]:
-    changes = 0
-    def repl(match: re.Match[str]) -> str:
-        nonlocal changes
-        uri = match.group('uri')
-        if uri.startswith(('dart:', 'flutter:', 'package:')):
-            return match.group(0)
-        name = Path(uri).name
-        destination = CANONICAL.get(name)
-        if destination is None:
-            return match.group(0)
-        changes += 1
-        return f"{match.group('quote')}package:{PACKAGE}/{destination}{match.group('quote')}"
-    return uri_pattern.sub(repl, text), changes
-
-changed_total = 0
+changed = 0
 for path in root.rglob('*.dart'):
     text = path.read_text(encoding='utf-8')
-    rewritten, changes = rewrite(text)
-    if changes:
-        path.write_text(rewritten, encoding='utf-8')
-        changed_total += changes
+    def repl(m):
+        global changed
+        uri = m.group('uri')
+        if uri.startswith(('dart:', 'flutter:', 'package:')):
+            return m.group(0)
+        destination = CANONICAL.get(Path(uri).name)
+        if destination is None or not uri.endswith('.dart'):
+            return m.group(0)
+        changed += 1
+        return f"{m.group('prefix')}{m.group('quote')}package:{PACKAGE}/{destination}{m.group('quote')}{m.group('suffix')}"
+    rewritten = directive.sub(repl, text)
+    path.write_text(rewritten, encoding='utf-8')
 
-# Fail early if any project-local Dart URI survived normalization.
+# The screen classes are not all guaranteed to have const constructors in the
+# original source. A runtime list is correct and removes a cascading const error.
+main = root / 'main.dart'
+main_text = main.read_text(encoding='utf-8')
+main_text = main_text.replace('static const _screens = [', 'static final _screens = [')
+main.write_text(main_text, encoding='utf-8')
+
+# Hard validation: no generated Dart file may retain a project-local URI for a
+# source file we know exists in the canonical tree.
 remaining = []
 for path in root.rglob('*.dart'):
     for line_no, line in enumerate(path.read_text(encoding='utf-8').splitlines(), 1):
-        for match in uri_pattern.finditer(line):
-            uri = match.group('uri')
-            if not uri.startswith(('dart:', 'flutter:', 'package:')) and Path(uri).name in CANONICAL:
-                remaining.append(f'{path}:{line_no}: {uri}')
-
+        m = directive.match(line)
+        if not m:
+            continue
+        uri = m.group('uri')
+        if not uri.startswith(('dart:', 'flutter:', 'package:')) and Path(uri).name in CANONICAL:
+            remaining.append(f'{path}:{line_no}: {uri}')
 if remaining:
-    raise SystemExit('Local project imports remain after normalization:\n' + '\n'.join(remaining))
+    raise SystemExit('Local project Dart imports remain:\n' + '\n'.join(remaining))
 
-required = [root / destination for destination in CANONICAL.values()]
-missing = [str(path) for path in required if not path.is_file()]
+required = [root / p for p in CANONICAL.values()]
+missing = [str(p) for p in required if not p.is_file()]
 if missing:
     raise SystemExit('Missing generated Dart source(s): ' + ', '.join(missing))
 
-print(f'Canonical Flutter source tree prepared; normalized {changed_total} local Dart import URI(s).')
+print(f'Canonical Flutter source tree prepared; normalized {changed} local Dart import(s).')
 PY
 
 echo 'Flutter source tree prepared successfully.'

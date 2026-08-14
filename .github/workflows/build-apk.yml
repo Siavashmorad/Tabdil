@@ -34,7 +34,7 @@ jobs:
         run: bash scripts/prepare_flutter_project.sh
 
       - name: Generate Android platform
-        run: flutter create --platforms=android --org com.tabdealtrader .
+        run: flutter create --platforms=android --org com.tabdealtrader --project-name tabdil .
 
       - name: Enable core library desugaring
         run: python3 patch_android_desugaring.py

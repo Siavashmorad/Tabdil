@@ -15,8 +15,11 @@ jobs:
     name: Build app-release.apk
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
+      - name: Checkout exact PR head
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
 
       - name: Set up Java
         uses: actions/setup-java@v4
@@ -31,6 +34,9 @@ jobs:
           flutter-version: '3.24.0'
           cache: true
 
+      - name: Validate prepare script syntax
+        run: bash -n scripts/prepare_flutter_project_v2.sh
+
       - name: Prepare canonical Flutter source tree
         run: bash scripts/prepare_flutter_project_v2.sh
 
@@ -38,11 +44,9 @@ jobs:
         run: |
           if [ ! -d android ]; then
             tmpdir="$(mktemp -d)"
-            cd "$tmpdir"
-            flutter create --platforms=android --org com.tabdealtrader --project-name tabdil .
-            cd - >/dev/null
+            trap 'rm -rf "$tmpdir"' EXIT
+            flutter create --platforms=android --org com.tabdealtrader --project-name tabdil "$tmpdir"
             cp -R "$tmpdir/android" ./android
-            rm -rf "$tmpdir"
           fi
 
       - name: Enable core library desugaring

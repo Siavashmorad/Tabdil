@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Build the Flutter tree from the canonical source files at repository root.
-# Do not maintain duplicate/simplified model copies under lib: the root files
-# are the source of truth.
+# Rebuild lib/ from the canonical Dart sources stored at repository root.
+# The root files are the source of truth; generated Android files are handled
+# separately by CI and never overwrite Dart sources.
 rm -rf lib
 mkdir -p \
   lib/core/api lib/core/analysis lib/core/models lib/core/risk lib/core/widgets \
@@ -30,8 +30,9 @@ cp portfolio_screen.dart lib/screens/portfolio/portfolio_screen.dart
 cp settings_screen.dart lib/screens/settings/settings_screen.dart
 cp analysis_detail_screen.dart lib/screens/analysis/analysis_detail_screen.dart
 
-# Canonical package targets. Imports are normalized by imported basename so
-# their correctness does not depend on the source file's directory depth.
+# Normalize every local Dart import to a package import.  Do this by basename
+# rather than relative depth, because the canonical sources live at repo root
+# while their Flutter destinations are nested below lib/.
 python3 <<'PY'
 from pathlib import Path
 import re
@@ -57,44 +58,58 @@ mapping = {
     'analysis_detail_screen.dart': 'package:crypto_trader/screens/analysis/analysis_detail_screen.dart',
 }
 
-pattern = re.compile(r"(['\"])(?!dart:|package:|flutter:)([^'\"]+\.dart)\1")
+# Match the complete quoted URI inside import/export/part directives.
+uri_re = re.compile(r"(['\"])([^'\"]+\.dart)\1")
 
 for path in Path('lib').rglob('*.dart'):
     text = path.read_text(encoding='utf-8')
-    def replace(match):
-        quote, value = match.groups()
-        name = value.rsplit('/', 1)[-1]
-        target = mapping.get(name)
-        if target:
-            return f"{quote}{target}{quote}"
-        return match.group(0)
-    updated = pattern.sub(replace, text)
-    path.write_text(updated, encoding='utf-8')
-PY
 
-required=(
-  lib/main.dart
-  lib/services/trading_controller.dart
-  lib/core/api/tabdeal_api_service.dart
-  lib/core/analysis/signal_engine.dart
-  lib/core/analysis/indicators.dart
-  lib/core/analysis/market_structure.dart
-  lib/core/analysis/candlestick_patterns.dart
-  lib/core/analysis/backtester.dart
-  lib/core/models/candle.dart
-  lib/core/models/trade_signal.dart
-  lib/core/models/order_models.dart
-  lib/core/risk/risk_manager.dart
-  lib/core/widgets/candlestick_chart.dart
-  lib/screens/dashboard/dashboard_screen.dart
-  lib/screens/trading/trading_screen.dart
-  lib/screens/portfolio/portfolio_screen.dart
-  lib/screens/settings/settings_screen.dart
-  lib/screens/analysis/analysis_detail_screen.dart
+    def normalize(match):
+        quote, uri = match.groups()
+        # Keep SDK, Flutter and already-canonical package imports untouched.
+        if uri.startswith(('dart:', 'flutter:', 'package:')):
+            return match.group(0)
+        filename = uri.rsplit('/', 1)[-1]
+        target = mapping.get(filename)
+        return f'{quote}{target}{quote}' if target else match.group(0)
+
+    updated = uri_re.sub(normalize, text)
+    path.write_text(updated, encoding='utf-8')
+
+required = (
+    'lib/main.dart',
+    'lib/services/trading_controller.dart',
+    'lib/core/api/tabdeal_api_service.dart',
+    'lib/core/analysis/signal_engine.dart',
+    'lib/core/analysis/indicators.dart',
+    'lib/core/analysis/market_structure.dart',
+    'lib/core/analysis/candlestick_patterns.dart',
+    'lib/core/analysis/backtester.dart',
+    'lib/core/models/candle.dart',
+    'lib/core/models/trade_signal.dart',
+    'lib/core/models/order_models.dart',
+    'lib/core/risk/risk_manager.dart',
+    'lib/core/widgets/candlestick_chart.dart',
+    'lib/screens/dashboard/dashboard_screen.dart',
+    'lib/screens/trading/trading_screen.dart',
+    'lib/screens/portfolio/portfolio_screen.dart',
+    'lib/screens/settings/settings_screen.dart',
+    'lib/screens/analysis/analysis_detail_screen.dart',
 )
 
-for file in "${required[@]}"; do
-  test -f "$file" || { echo "Missing generated source: $file"; exit 1; }
-done
+for file in required:
+    if not Path(file).is_file():
+        raise SystemExit(f'Missing generated source: {file}')
 
-echo "Flutter source tree prepared from canonical root sources; imports normalized to package paths."
+# Fail early if a local import to one of the canonical project files remains.
+remaining = []
+for path in Path('lib').rglob('*.dart'):
+    for line_no, line in enumerate(path.read_text(encoding='utf-8').splitlines(), 1):
+        if re.search(r"^\s*(?:import|export|part)\s+['\"](?:\.\.?/|[^:/'\"]+\.dart)", line):
+            remaining.append(f'{path}:{line_no}: {line.strip()}')
+if remaining:
+    print('Unnormalized local Dart imports:')
+    print('\n'.join(remaining))
+    raise SystemExit(1)
+
+echo 'Flutter source tree prepared; all local Dart imports normalized to package paths.'

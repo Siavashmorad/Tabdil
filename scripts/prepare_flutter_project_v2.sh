@@ -25,12 +25,13 @@ cp analysis_detail_screen.dart lib/screens/analysis/analysis_detail_screen.dart
 
 python3 - <<'PY'
 from pathlib import Path
+import posixpath
 import re
 
 PACKAGE = 'crypto_trader'
-root = Path('lib')
+root = Path('lib').resolve()
 
-files = {
+sources = {
     'main.dart': 'main.dart',
     'trading_controller.dart': 'services/trading_controller.dart',
     'tabdeal_api_service.dart': 'core/api/tabdeal_api_service.dart',
@@ -51,15 +52,20 @@ files = {
     'analysis_detail_screen.dart': 'screens/analysis/analysis_detail_screen.dart',
 }
 
-line_re = re.compile(r"^(\s*(?:import|export|part)\s+['\"])([^'\"]+\.dart)(['\"])(.*)$")
+# Resolve a relative URI against the actual Dart source file, then map the
+# resolved basename to the canonical generated source. This intentionally
+# does not rely on the number of ../ segments or on the importing directory.
+by_name = {Path(rel).name: rel for rel in sources.values()}
+pattern = re.compile(r"^(\s*(?:import|export|part\s+of)\s+['\"])([^'\"]+)(['\"])(.*)$")
 
 for path in root.rglob('*.dart'):
-    output = []
+    lines = path.read_text(encoding='utf-8').splitlines(keepends=True)
     changed = False
-    for raw in path.read_text(encoding='utf-8').splitlines(keepends=True):
+    output = []
+    for raw in lines:
         newline = '\n' if raw.endswith('\n') else ''
         line = raw[:-1] if newline else raw
-        m = line_re.match(line)
+        m = pattern.match(line)
         if not m:
             output.append(raw)
             continue
@@ -67,16 +73,24 @@ for path in root.rglob('*.dart'):
         if uri.startswith(('dart:', 'flutter:', 'package:')):
             output.append(raw)
             continue
-        destination = files.get(Path(uri).name)
-        if destination:
-            output.append(f'{prefix}package:{PACKAGE}/{destination}{quote}{suffix}{newline}')
+        resolved = (path.parent / uri).resolve()
+        try:
+            resolved.relative_to(root)
+        except ValueError:
+            output.append(raw)
+            continue
+        rel_source = sources.get(resolved.relative_to(root).as_posix())
+        if rel_source is None:
+            rel_source = by_name.get(Path(uri).name)
+        if rel_source:
+            output.append(f'{prefix}package:{PACKAGE}/{rel_source}{quote}{suffix}{newline}')
             changed = True
         else:
             output.append(raw)
     if changed:
         path.write_text(''.join(output), encoding='utf-8')
 
-required = [root / rel for rel in files.values()]
+required = [root / rel for rel in sources.values()]
 missing = [str(p) for p in required if not p.is_file()]
 if missing:
     raise SystemExit('Missing generated source(s): ' + ', '.join(missing))
@@ -84,7 +98,7 @@ if missing:
 remaining = []
 for path in root.rglob('*.dart'):
     for line_no, line in enumerate(path.read_text(encoding='utf-8').splitlines(), 1):
-        m = line_re.match(line)
+        m = pattern.match(line)
         if m and not m.group(2).startswith(('dart:', 'flutter:', 'package:')):
             remaining.append(f'{path}:{line_no}: {line.strip()}')
 if remaining:
@@ -92,7 +106,7 @@ if remaining:
     print('\n'.join(remaining))
     raise SystemExit(1)
 
-print('Flutter source tree prepared; all local Dart imports canonicalized to package paths.')
+print('Flutter source tree prepared; all resolvable local Dart imports canonicalized to package paths.')
 PY
 
 echo 'Flutter source tree prepared successfully.'

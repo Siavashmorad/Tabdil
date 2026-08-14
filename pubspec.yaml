@@ -1,0 +1,59 @@
+name: crypto_trader
+description: "AI Crypto Analysis & Auto-Trading App for Tabdeal Exchange (Personal Use)"
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.6
+
+  # Networking
+  http: ^1.2.1
+  web_socket_channel: ^2.4.0
+
+  # Security / signing (HMAC-SHA256 for Tabdeal API auth)
+  crypto: ^3.0.3
+
+  # Local persistent storage (API keys, settings, trade history)
+  shared_preferences: ^2.2.3
+  flutter_secure_storage: ^9.2.2
+  sqflite: ^2.3.3
+  path: ^1.9.0
+
+  # State management
+  provider: ^6.1.2
+
+  # Charts
+  fl_chart: ^0.68.0
+
+  # Background execution (best-effort; see README limitations)
+  flutter_background_service: ^5.0.10
+  flutter_local_notifications: ^17.2.1
+  wakelock_plus: ^1.2.5
+
+  # Utilities
+  intl: ^0.19.0
+  collection: ^1.18.0
+  equatable: ^2.0.5
+  logger: ^2.4.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
+  # No bundled assets are used yet, so nothing is declared here.
+  # If you add real files (icons, fonts, etc.) under an assets/ folder later,
+  # re-add:
+  #   assets:
+  #     - assets/
+  # and make sure the folder + its files are actually committed to git —
+  # note that GitHub's mobile/web upload UI can silently skip empty folders
+  # and dotfiles like .gitkeep, which was the root cause of the previous
+  # "unable to find directory entry in pubspec.yaml: assets/" build error.

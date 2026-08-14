@@ -1,0 +1,80 @@
+name: Build Release APK
+
+# Manual trigger + trigger on push to main so you can build on demand
+# directly from GitHub (no computer required).
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+
+jobs:
+  build:
+    name: Build app-release.apk
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java (required for Android Gradle build)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          flutter-version: '3.24.0'
+          cache: true
+
+      - name: Verify project structure (fails fast with a clear message)
+        run: |
+          if [ ! -f "pubspec.yaml" ]; then
+            echo "::error::pubspec.yaml not found in repo root. See README.fa.md for required structure."
+            exit 1
+          fi
+          if [ ! -d "lib" ]; then
+            echo "::error::lib/ folder not found in repo root. Dart source files must live under lib/."
+            exit 1
+          fi
+          echo "Project structure looks correct."
+
+      - name: Generate missing native platform folders (android/, etc.)
+        run: flutter create --platforms=android --org com.tabdealtrader .
+
+      - name: Enable core library desugaring (required by flutter_local_notifications)
+        run: python3 scripts/patch_android_desugaring.py
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Analyze (non-blocking — surfaces warnings without failing the build)
+        run: flutter analyze || true
+
+      - name: Build release APK
+        run: flutter build apk --release
+
+      - name: Rename output to app-release.apk (explicit, matches requested filename)
+        run: |
+          mkdir -p dist
+          cp build/app/outputs/flutter-apk/app-release.apk dist/app-release.apk
+
+      - name: Upload app-release.apk as build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-release-apk
+          path: dist/app-release.apk
+          retention-days: 30
+
+      - name: Attach APK to a GitHub Release (only on push to main/master)
+        if: github.event_name == 'push'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: "Auto build #${{ github.run_number }}"
+          files: dist/app-release.apk
+          prerelease: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

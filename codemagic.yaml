@@ -1,0 +1,62 @@
+workflows:
+  android-apk-release:
+    name: Crypto Trader - Android APK (Release)
+    max_build_duration: 60
+    instance_type: linux_x2
+    environment:
+      flutter: stable
+      java: 17
+      vars:
+        PACKAGE_NAME: "com.tabdealtrader.crypto_trader"
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: main
+          include: true
+        - pattern: master
+          include: true
+      cancel_previous_builds: true
+    scripts:
+      - name: Sanity check project structure
+        script: |
+          set -e
+          if [ ! -f "pubspec.yaml" ]; then
+            echo "pubspec.yaml not found in repo root." && exit 1
+          fi
+          if [ ! -d "lib" ]; then
+            echo "lib/ folder not found in repo root." && exit 1
+          fi
+          echo "Project structure OK."
+
+      - name: Generate missing native android/ folder
+        script: |
+          flutter create --platforms=android --org com.tabdealtrader .
+
+      - name: Enable core library desugaring (required by flutter_local_notifications)
+        script: |
+          python3 scripts/patch_android_desugaring.py
+
+      - name: Install dependencies
+        script: |
+          flutter pub get
+
+      - name: Static analysis (non-blocking)
+        script: |
+          flutter analyze || true
+
+      - name: Build release APK
+        script: |
+          flutter build apk --release
+
+    artifacts:
+      - build/app/outputs/flutter-apk/app-release.apk
+      - build/app/outputs/**/mapping.txt
+      - flutter_drive.log
+
+    publishing:
+      email:
+        recipients: []
+        notify:
+          success: true
+          failure: true

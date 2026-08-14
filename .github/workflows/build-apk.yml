@@ -60,8 +60,8 @@ jobs:
 
           void main() {
             testWidgets('app smoke test', (tester) async {
-              await tester.pumpWidget(const MyApp());
-              expect(find.byType(MyApp), findsOneWidget);
+              await tester.pumpWidget(const CryptoTraderApp());
+              expect(find.byType(CryptoTraderApp), findsOneWidget);
             });
           }
           EOF

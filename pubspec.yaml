@@ -46,6 +46,13 @@ dev_dependencies:
     sdk: flutter
   flutter_lints: ^4.0.0
 
+# package_info_plus 9.x expects a newer Flutter/Android Gradle environment
+# than the Flutter 3.24 build used by this project. Pin the transitive
+# dependency to the last compatible 8.x release to keep release builds
+# reproducible on the current CI toolchain.
+dependency_overrides:
+  package_info_plus: 8.3.1
+
 flutter:
   uses-material-design: true
   # No bundled assets are used yet, so nothing is declared here.

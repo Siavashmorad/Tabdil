@@ -48,23 +48,29 @@ jobs:
               .
           fi
 
-      - name: Align Kotlin Gradle plugin with Android dependencies
+      - name: Align Android Gradle toolchain with current plugins
         run: |
           python3 - <<'PY'
           from pathlib import Path
           import re
-          p = Path('android/settings.gradle')
-          s = p.read_text()
-          s, count = re.subn(
-              r'(id\s+["\']org\.jetbrains\.kotlin\.android["\']\s+version\s+["\'])[^"\']+(["\'])',
-              r'\g<1>2.2.0\2',
-              s,
-              count=1,
-          )
-          if count != 1:
-              raise SystemExit('Could not locate org.jetbrains.kotlin.android plugin version in android/settings.gradle')
-          p.write_text(s)
-          print('Kotlin Gradle plugin aligned to 2.2.0')
+
+          settings = Path('android/settings.gradle')
+          s = settings.read_text()
+          replacements = {
+              r'(id\s+["\']com\.android\.application["\']\s+version\s+["\'])[^"\']+(["\'])': r'\g<1>8.8.2\2',
+              r'(id\s+["\']org\.jetbrains\.kotlin\.android["\']\s+version\s+["\'])[^"\']+(["\'])': r'\g<1>2.2.0\2',
+          }
+          for pattern, replacement in replacements.items():
+              s, count = re.subn(pattern, replacement, s, count=1)
+              if count != 1:
+                  raise SystemExit(f'Could not update Android plugin in android/settings.gradle: {pattern}')
+          settings.write_text(s)
+
+          wrapper = Path('android/gradle/wrapper/gradle-wrapper.properties')
+          ws = wrapper.read_text()
+          ws = re.sub(r'distributionUrl=.*', 'distributionUrl=https\\://services.gradle.org/distributions/gradle-8.10.2-all.zip', ws)
+          wrapper.write_text(ws)
+          print('Android Gradle Plugin 8.8.2 + Kotlin 2.2.0 + Gradle 8.10.2 configured')
           PY
 
       - name: Fix generated Flutter smoke test
@@ -86,9 +92,12 @@ jobs:
         run: |
           test -f android/settings.gradle
           test -f android/app/build.gradle
+          test -f android/gradle/wrapper/gradle-wrapper.properties
           grep -q "dev.flutter.flutter-gradle-plugin" android/app/build.gradle
           grep -q "flutter.compileSdkVersion" android/app/build.gradle
           grep -q "org.jetbrains.kotlin.android.*2.2.0" android/settings.gradle
+          grep -q "com.android.application.*8.8.2" android/settings.gradle
+          grep -q "gradle-8.10.2-all.zip" android/gradle/wrapper/gradle-wrapper.properties
 
       - name: Enable core library desugaring
         run: python3 patch_android_desugaring.py
@@ -107,9 +116,9 @@ jobs:
           p = Path(sys.argv[1])
           s = p.read_text()
           for pattern, value in {
-              r'flutter\.compileSdkVersion': '34',
+              r'flutter\.compileSdkVersion': '35',
               r'flutter\.minSdkVersion': '21',
-              r'flutter\.targetSdkVersion': '34',
+              r'flutter\.targetSdkVersion': '35',
           }.items():
               s = re.sub(pattern, value, s)
           p.write_text(s)

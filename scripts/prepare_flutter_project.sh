@@ -1,27 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Assemble the standard Flutter lib/ tree from the source files currently
-# stored at repository root. The source files are deliberately kept at root
-# so the existing GitHub-uploaded project remains intact.
-
 rm -rf lib
-mkdir -p \
-  lib/core/api \
-  lib/core/analysis \
-  lib/core/models \
-  lib/core/risk \
-  lib/core/widgets \
-  lib/services \
-  lib/screens/dashboard \
-  lib/screens/trading \
-  lib/screens/portfolio \
-  lib/screens/settings \
-  lib/screens/analysis
+mkdir -p lib/core/{api,analysis,models,risk,widgets} lib/services lib/screens/{dashboard,trading,portfolio,settings,analysis}
 
 cp main.dart lib/main.dart
 cp trading_controller.dart lib/services/trading_controller.dart
-
 cp tabdeal_api_service.dart lib/core/api/tabdeal_api_service.dart
 cp signal_engine.dart lib/core/analysis/signal_engine.dart
 cp indicators.dart lib/core/analysis/indicators.dart
@@ -32,41 +16,88 @@ cp candle.dart lib/core/models/candle.dart
 cp trade_signal.dart lib/core/models/trade_signal.dart
 cp order_models.dart lib/core/models/order_models.dart
 cp risk_manager.dart lib/core/risk/risk_manager.dart
-
-# candlestick_chart.dart contains imports relative to lib/core/widgets/.
-# The previous flat destination (lib/core/widgets_candlestick_chart.dart)
-# made ../core/models resolve to a non-existent lib/core/core/models path.
 cp candlestick_chart.dart lib/core/widgets/candlestick_chart.dart
-
 cp dashboard_screen.dart lib/screens/dashboard/dashboard_screen.dart
 cp trading_screen.dart lib/screens/trading/trading_screen.dart
 cp portfolio_screen.dart lib/screens/portfolio/portfolio_screen.dart
 cp settings_screen.dart lib/screens/settings/settings_screen.dart
 cp analysis_detail_screen.dart lib/screens/analysis/analysis_detail_screen.dart
 
-required=(
-  lib/main.dart
-  lib/services/trading_controller.dart
-  lib/core/api/tabdeal_api_service.dart
-  lib/core/analysis/signal_engine.dart
-  lib/core/analysis/indicators.dart
-  lib/core/analysis/market_structure.dart
-  lib/core/analysis/candlestick_patterns.dart
-  lib/core/analysis/backtester.dart
-  lib/core/models/candle.dart
-  lib/core/models/trade_signal.dart
-  lib/core/models/order_models.dart
-  lib/core/risk/risk_manager.dart
-  lib/core/widgets/candlestick_chart.dart
-  lib/screens/dashboard/dashboard_screen.dart
-  lib/screens/trading/trading_screen.dart
-  lib/screens/portfolio/portfolio_screen.dart
-  lib/screens/settings/settings_screen.dart
-  lib/screens/analysis/analysis_detail_screen.dart
+python3 - <<'PY'
+from pathlib import Path
+import re
+
+PACKAGE = 'crypto_trader'
+root = Path('lib')
+CANONICAL = {
+    'main.dart': 'main.dart',
+    'trading_controller.dart': 'services/trading_controller.dart',
+    'tabdeal_api_service.dart': 'core/api/tabdeal_api_service.dart',
+    'signal_engine.dart': 'core/analysis/signal_engine.dart',
+    'indicators.dart': 'core/analysis/indicators.dart',
+    'market_structure.dart': 'core/analysis/market_structure.dart',
+    'candlestick_patterns.dart': 'core/analysis/candlestick_patterns.dart',
+    'backtester.dart': 'core/analysis/backtester.dart',
+    'candle.dart': 'core/models/candle.dart',
+    'trade_signal.dart': 'core/models/trade_signal.dart',
+    'order_models.dart': 'core/models/order_models.dart',
+    'risk_manager.dart': 'core/risk/risk_manager.dart',
+    'candlestick_chart.dart': 'core/widgets/candlestick_chart.dart',
+    'dashboard_screen.dart': 'screens/dashboard/dashboard_screen.dart',
+    'trading_screen.dart': 'screens/trading/trading_screen.dart',
+    'portfolio_screen.dart': 'screens/portfolio/portfolio_screen.dart',
+    'settings_screen.dart': 'screens/settings/settings_screen.dart',
+    'analysis_detail_screen.dart': 'screens/analysis/analysis_detail_screen.dart',
+}
+
+directive = re.compile(
+    r"(?m)^(?P<prefix>\s*(?:import|export|part(?:\s+of)?)\s+)"
+    r"(?P<quote>['\"])(?P<uri>[^'\"]+)(?P=quote)(?P<suffix>[^;]*;?)"
 )
 
-for file in "${required[@]}"; do
-  test -f "$file" || { echo "Missing generated source: $file"; exit 1; }
-done
+changed = 0
+for path in root.rglob('*.dart'):
+    text = path.read_text(encoding='utf-8')
+    def repl(m):
+        global changed
+        uri = m.group('uri')
+        if uri.startswith(('dart:', 'flutter:', 'package:')):
+            return m.group(0)
+        destination = CANONICAL.get(Path(uri).name)
+        if destination is None or not uri.endswith('.dart'):
+            return m.group(0)
+        changed += 1
+        return f"{m.group('prefix')}{m.group('quote')}package:{PACKAGE}/{destination}{m.group('quote')}{m.group('suffix')}"
+    rewritten = directive.sub(repl, text)
+    path.write_text(rewritten, encoding='utf-8')
 
-echo "Flutter source tree prepared successfully."
+main = root / 'main.dart'
+main_text = main.read_text(encoding='utf-8')
+main_text = main_text.replace('static const _screens = [', 'static final _screens = [')
+main.write_text(main_text, encoding='utf-8')
+
+remaining = []
+for path in root.rglob('*.dart'):
+    for line_no, line in enumerate(path.read_text(encoding='utf-8').splitlines(), 1):
+        m = directive.match(line)
+        if not m:
+            continue
+        uri = m.group('uri')
+        if not uri.startswith(('dart:', 'flutter:', 'package:')) and Path(uri).name in CANONICAL:
+            remaining.append(f'{path}:{line_no}: {uri}')
+if remaining:
+    raise SystemExit('Local project Dart imports remain:\n' + '\n'.join(remaining))
+
+required = [root / p for p in CANONICAL.values()]
+missing = [str(p) for p in required if not p.is_file()]
+if missing:
+    raise SystemExit('Missing generated Dart source(s): ' + ', '.join(missing))
+
+print(f'Canonical Flutter source tree prepared; normalized {changed} local Dart import(s).')
+PY
+
+# Root Dart files are staging inputs. Remove them from the package workspace
+# so flutter analyze does not analyze duplicate legacy sources.
+find . -maxdepth 1 -type f -name '*.dart' -delete
+
+echo 'Flutter source tree prepared successfully; legacy root Dart sources removed from analysis.'

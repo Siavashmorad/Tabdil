@@ -85,23 +85,24 @@ jobs:
           test -f "$WakelockGradle"
           python3 - "$WakelockGradle" <<'PY'
           from pathlib import Path
+          import re
           import sys
           p = Path(sys.argv[1])
           s = p.read_text()
           replacements = {
-              'flutter.compileSdkVersion': '34',
-              'flutter.minSdkVersion': '21',
-              'flutter.targetSdkVersion': '34',
+              r'flutter\.compileSdkVersion': '34',
+              r'flutter\.minSdkVersion': '21',
+              r'flutter\.targetSdkVersion': '34',
           }
-          for old, new in replacements.items():
-              s = s.replace(old, new)
+          for pattern, value in replacements.items():
+              s = re.sub(pattern, value, s)
           p.write_text(s)
           print(p.read_text())
           PY
-          grep -Eq 'compileSdkVersion[[:space:]]+34|compileSdk[[:space:]]+34' "$WakelockGradle"
-          ! grep -q 'flutter\.compileSdkVersion' "$WakelockGradle"
-          ! grep -q 'flutter\.minSdkVersion' "$WakelockGradle"
-          ! grep -q 'flutter\.targetSdkVersion' "$WakelockGradle"
+          ! grep -Eq 'flutter\.(compileSdkVersion|minSdkVersion|targetSdkVersion)' "$WakelockGradle"
+          grep -Eq '(compileSdkVersion|compileSdk)[[:space:]]*[= ]+[0-9]+' "$WakelockGradle"
+          grep -Eq '(minSdkVersion|minSdk)[[:space:]]*[= ]+[0-9]+' "$WakelockGradle"
+          grep -Eq '(targetSdkVersion|targetSdk)[[:space:]]*[= ]+[0-9]+' "$WakelockGradle"
 
       - name: Format Dart sources
         run: dart format lib test

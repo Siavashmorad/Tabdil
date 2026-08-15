@@ -1,23 +1,28 @@
-import 'candle.dart';
-import 'trade_signal.dart';
+import '../models/candle.dart';
+import '../models/trade_signal.dart';
+import 'signal_engine.dart';
 
 class BacktestTrade {
-  final String symbol;
+  final DateTime entryTime;
+  final DateTime? exitTime;
   final SignalDirection direction;
   final double entryPrice;
   final double exitPrice;
-  final double quantity;
-  final double pnl;
-  final double returnPercent;
+  final double stopLoss;
+  final double takeProfit1;
+  final String exitReason; // 'TP1' | 'SL' | 'end_of_data'
+  final double pnlPercent;
 
-  const BacktestTrade({
-    required this.symbol,
+  BacktestTrade({
+    required this.entryTime,
+    required this.exitTime,
     required this.direction,
     required this.entryPrice,
     required this.exitPrice,
-    required this.quantity,
-    required this.pnl,
-    required this.returnPercent,
+    required this.stopLoss,
+    required this.takeProfit1,
+    required this.exitReason,
+    required this.pnlPercent,
   });
 }
 
@@ -30,7 +35,7 @@ class BacktestReport {
   final double totalReturnPercent;
   final int totalTrades;
 
-  const BacktestReport({
+  BacktestReport({
     required this.trades,
     required this.winRatePercent,
     required this.profitFactor,
@@ -39,96 +44,143 @@ class BacktestReport {
     required this.totalReturnPercent,
     required this.totalTrades,
   });
+
+  static BacktestReport empty() => BacktestReport(
+        trades: [],
+        winRatePercent: 0,
+        profitFactor: 0,
+        maxDrawdownPercent: 0,
+        sharpeRatio: 0,
+        totalReturnPercent: 0,
+        totalTrades: 0,
+      );
 }
 
+/// Walk-forward style backtester: replays the [SignalEngine] bar-by-bar
+/// over historical candles (no lookahead — at each step, only candles up
+/// to and including the current index are visible to the engine), then
+/// simulates trade outcomes against subsequent price action using a simple
+/// TP1/SL exit model.
+///
+/// This is a simplified, single-position-at-a-time simulator suitable for
+/// sanity-checking the ensemble engine's historical behavior on a phone —
+/// not an institutional-grade backtesting framework (no slippage, fee, or
+/// partial-fill modeling beyond a flat fee assumption).
 class Backtester {
+  final SignalEngine engine;
+  final int minHistoryBars;
+  final double feePercentPerSide;
+
+  Backtester({
+    SignalEngine? engine,
+    this.minHistoryBars = 60,
+    this.feePercentPerSide = 0.1, // Tabdeal-style ~0.1% taker fee assumption
+  }) : engine = engine ?? SignalEngine();
+
   BacktestReport run({
+    required String symbol,
     required List<Candle> candles,
-    required List<TradeSignal> signals,
-    double startingCapital = 1000,
-    double riskPerTrade = 0.01,
   }) {
+    if (candles.length < minHistoryBars + 10) return BacktestReport.empty();
+
     final trades = <BacktestTrade>[];
-    final returns = <double>[];
-    var equity = startingCapital;
-    var peakEquity = startingCapital;
-    var maxDrawdown = 0.0;
-    var grossProfit = 0.0;
-    var grossLoss = 0.0;
+    int i = minHistoryBars;
 
-    for (var i = 0; i < signals.length && i < candles.length; i++) {
-      final signal = signals[i];
-      if (signal.direction == SignalDirection.neutral) continue;
+    while (i < candles.length - 1) {
+      final windowCandles = candles.sublist(0, i + 1); // no lookahead
+      final signal = engine.analyze(symbol: symbol, exchange: 'Tabdeal', candles: windowCandles);
 
-      final entry = candles[i].close;
-      if (entry == null || entry <= 0) continue;
-
-      final next = i + 1;
-      if (next >= candles.length) break;
-      final exit = candles[next].close;
-      if (exit == null || exit <= 0) continue;
-
-      final riskCapital = equity * riskPerTrade;
-      final quantity = riskCapital / entry;
-      final priceDelta = signal.direction == SignalDirection.long
-          ? exit - entry
-          : entry - exit;
-      final pnl = quantity * priceDelta;
-      final returnPercent = equity == 0 ? 0.0 : (pnl / equity) * 100;
-
-      equity += pnl;
-      if (pnl >= 0) {
-        grossProfit += pnl;
-      } else {
-        grossLoss += pnl.abs();
+      if (signal == null) {
+        i++;
+        continue;
       }
 
-      peakEquity = equity > peakEquity ? equity : peakEquity;
-      final drawdown = peakEquity == 0
-          ? 0.0
-          : ((peakEquity - equity) / peakEquity) * 100;
-      maxDrawdown = drawdown > maxDrawdown ? drawdown : maxDrawdown;
+      // Simulate forward from the next candle until SL or TP1 is hit.
+      final entryPrice = candles[i].close;
+      final isLong = signal.direction == SignalDirection.long;
+      int j = i + 1;
+      double? exitPrice;
+      String exitReason = 'end_of_data';
+      DateTime? exitTime;
 
-      returns.add(returnPercent);
-      trades.add(
-        BacktestTrade(
-          symbol: signal.symbol,
-          direction: signal.direction,
-          entryPrice: entry,
-          exitPrice: exit,
-          quantity: quantity,
-          pnl: pnl,
-          returnPercent: returnPercent,
-        ),
-      );
+      while (j < candles.length) {
+        final c = candles[j];
+        final hitSl = isLong ? c.low <= signal.stopLoss : c.high >= signal.stopLoss;
+        final hitTp = isLong ? c.high >= signal.takeProfit1 : c.low <= signal.takeProfit1;
+
+        // Conservative assumption: if both SL and TP are within the same
+        // candle's range, assume SL is hit first (worst-case ordering).
+        if (hitSl) {
+          exitPrice = signal.stopLoss;
+          exitReason = 'SL';
+          exitTime = c.openTime;
+          break;
+        }
+        if (hitTp) {
+          exitPrice = signal.takeProfit1;
+          exitReason = 'TP1';
+          exitTime = c.openTime;
+          break;
+        }
+        j++;
+      }
+
+      exitPrice ??= candles.last.close;
+      exitTime ??= candles.last.openTime;
+
+      final rawPnlPercent = isLong
+          ? (exitPrice - entryPrice) / entryPrice * 100
+          : (entryPrice - exitPrice) / entryPrice * 100;
+      final netPnlPercent = rawPnlPercent - (feePercentPerSide * 2);
+
+      trades.add(BacktestTrade(
+        entryTime: candles[i].openTime,
+        exitTime: exitTime,
+        direction: signal.direction,
+        entryPrice: entryPrice,
+        exitPrice: exitPrice,
+        stopLoss: signal.stopLoss,
+        takeProfit1: signal.takeProfit1,
+        exitReason: exitReason,
+        pnlPercent: netPnlPercent,
+      ));
+
+      // Move forward past this trade's exit to avoid overlapping positions.
+      i = j > i ? j + 1 : i + 1;
     }
 
-    final wins = trades.where((trade) => trade.pnl > 0).length;
-    final winRate = trades.isEmpty ? 0.0 : (wins / trades.length) * 100;
-    final profitFactor = grossLoss == 0 ? 99.99 : grossProfit / grossLoss;
-    final totalReturn = startingCapital == 0
-        ? 0.0
-        : ((equity - startingCapital) / startingCapital) * 100;
+    return _buildReport(trades);
+  }
 
-    if (returns.isEmpty) {
-      return BacktestReport(
-        trades: trades,
-        winRatePercent: winRate,
-        profitFactor: profitFactor,
-        maxDrawdownPercent: maxDrawdown,
-        sharpeRatio: 0.0,
-        totalReturnPercent: totalReturn,
-        totalTrades: trades.length,
-      );
+  BacktestReport _buildReport(List<BacktestTrade> trades) {
+    if (trades.isEmpty) return BacktestReport.empty();
+
+    final wins = trades.where((t) => t.pnlPercent > 0).toList();
+    final losses = trades.where((t) => t.pnlPercent <= 0).toList();
+
+    final winRate = wins.length / trades.length * 100;
+
+    final grossProfit = wins.fold<double>(0, (a, t) => a + t.pnlPercent);
+    final grossLoss = losses.fold<double>(0, (a, t) => a + t.pnlPercent.abs());
+    final profitFactor = grossLoss == 0 ? (grossProfit > 0 ? double.infinity : 0) : grossProfit / grossLoss;
+
+    // Equity curve (cumulative % return, compounded).
+    double equity = 100;
+    double peak = 100;
+    double maxDrawdown = 0;
+    final returns = <double>[];
+    for (final t in trades) {
+      equity *= (1 + t.pnlPercent / 100);
+      returns.add(t.pnlPercent);
+      if (equity > peak) peak = equity;
+      final drawdown = (peak - equity) / peak * 100;
+      if (drawdown > maxDrawdown) maxDrawdown = drawdown;
     }
+    final totalReturn = equity - 100;
 
     // Simple per-trade Sharpe-style ratio (mean / stddev of trade returns).
     final meanReturn = returns.fold<double>(0.0, (a, b) => a + b) / returns.length;
-    final variance = returns.fold<double>(
-          0.0,
-          (a, b) => a + (b - meanReturn) * (b - meanReturn),
-        ) /
-        returns.length;
+    final variance = returns.fold<double>(0.0, (a, b) => a + (b - meanReturn) * (b - meanReturn)) / returns.length;
     final stdDev = variance <= 0 ? 0.0 : _sqrt(variance);
     final sharpe = stdDev == 0 ? 0.0 : meanReturn / stdDev;
 

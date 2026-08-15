@@ -73,6 +73,36 @@ jobs:
           print('Android Gradle Plugin 8.8.2 + Kotlin 2.2.0 + Gradle 8.10.2 configured')
           PY
 
+      - name: Force one Kotlin version for every Android plugin
+        run: |
+          cat > android/kotlin-toolchain.init.gradle <<'EOF'
+          allprojects { project ->
+            project.configurations.configureEach {
+              resolutionStrategy.eachDependency { details ->
+                if (details.requested.group == 'org.jetbrains.kotlin') {
+                  details.useVersion('2.2.0')
+                  details.because('Keep all Flutter plugins on the same Kotlin compiler/runtime version')
+                }
+              }
+            }
+          }
+          EOF
+          cat >> android/gradle.properties <<'EOF'
+          kotlin.code.style=official
+          kotlin.jvm.target.validation.mode=warning
+          EOF
+
+      - name: Verify Android Gradle toolchain
+        run: |
+          test -f android/settings.gradle
+          test -f android/app/build.gradle
+          test -f android/gradle/wrapper/gradle-wrapper.properties
+          grep -q "dev.flutter.flutter-gradle-plugin" android/app/build.gradle
+          grep -q "flutter.compileSdkVersion" android/app/build.gradle
+          grep -q "org.jetbrains.kotlin.android.*2.2.0" android/settings.gradle
+          grep -q "com.android.application.*8.8.2" android/settings.gradle
+          grep -q "gradle-8.10.2-all.zip" android/gradle/wrapper/gradle-wrapper.properties
+
       - name: Fix generated Flutter smoke test
         run: |
           mkdir -p test
@@ -87,17 +117,6 @@ jobs:
             });
           }
           EOF
-
-      - name: Verify Flutter Android integration
-        run: |
-          test -f android/settings.gradle
-          test -f android/app/build.gradle
-          test -f android/gradle/wrapper/gradle-wrapper.properties
-          grep -q "dev.flutter.flutter-gradle-plugin" android/app/build.gradle
-          grep -q "flutter.compileSdkVersion" android/app/build.gradle
-          grep -q "org.jetbrains.kotlin.android.*2.2.0" android/settings.gradle
-          grep -q "com.android.application.*8.8.2" android/settings.gradle
-          grep -q "gradle-8.10.2-all.zip" android/gradle/wrapper/gradle-wrapper.properties
 
       - name: Enable core library desugaring
         run: python3 patch_android_desugaring.py
@@ -135,13 +154,14 @@ jobs:
         run: flutter test
 
       - name: Build release APK
-        run: flutter build apk --release
+        run: ./gradlew --init-script kotlin-toolchain.init.gradle :app:assembleRelease --stacktrace
+        working-directory: android
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: app-release-apk
-          path: build/app/outputs/flutter-apk/app-release.apk
+          path: android/app/build/outputs/apk/release/app-release.apk
           retention-days: 30
 
       - name: Create prerelease on main/master
@@ -150,5 +170,5 @@ jobs:
         with:
           tag_name: build-${{ github.run_number }}
           name: Auto build #${{ github.run_number }}
-          files: build/app/outputs/flutter-apk/app-release.apk
+          files: android/app/build/outputs/apk/release/app-release.apk
           prerelease: true

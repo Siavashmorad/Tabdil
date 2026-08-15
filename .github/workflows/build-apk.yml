@@ -48,6 +48,25 @@ jobs:
               .
           fi
 
+      - name: Align Kotlin Gradle plugin with Android dependencies
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          p = Path('android/settings.gradle')
+          s = p.read_text()
+          s, count = re.subn(
+              r'(id\s+["\']org\.jetbrains\.kotlin\.android["\']\s+version\s+["\'])[^"\']+(["\'])',
+              r'\g<1>2.2.0\2',
+              s,
+              count=1,
+          )
+          if count != 1:
+              raise SystemExit('Could not locate org.jetbrains.kotlin.android plugin version in android/settings.gradle')
+          p.write_text(s)
+          print('Kotlin Gradle plugin aligned to 2.2.0')
+          PY
+
       - name: Fix generated Flutter smoke test
         run: |
           mkdir -p test
@@ -69,6 +88,7 @@ jobs:
           test -f android/app/build.gradle
           grep -q "dev.flutter.flutter-gradle-plugin" android/app/build.gradle
           grep -q "flutter.compileSdkVersion" android/app/build.gradle
+          grep -q "org.jetbrains.kotlin.android.*2.2.0" android/settings.gradle
 
       - name: Enable core library desugaring
         run: python3 patch_android_desugaring.py

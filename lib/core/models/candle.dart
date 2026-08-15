@@ -21,12 +21,13 @@ class Candle {
   double get range => high - low;
 
   factory Candle.fromJson(Map<String, dynamic> json) {
+    final rawTime = json['time'] ?? json['timestamp'] ?? 0;
+    final milliseconds = rawTime is num
+        ? rawTime.toInt()
+        : int.tryParse('$rawTime') ?? 0;
+
     return Candle(
-      time: DateTime.fromMillisecondsSinceEpoch(
-        (json['time'] ?? json['timestamp'] ?? 0) is int
-            ? (json['time'] ?? json['timestamp'] ?? 0) as int
-            : int.tryParse('${json['time'] ?? json['timestamp'] ?? 0}') ?? 0,
-      ),
+      time: DateTime.fromMillisecondsSinceEpoch(milliseconds),
       open: _number(json['open']),
       high: _number(json['high']),
       low: _number(json['low']),
@@ -35,6 +36,8 @@ class Candle {
     );
   }
 
-  static double _number(dynamic value) =>
-      value is num ? value.toDouble() : double.tryParse('$value') ?? 0;
+  static double _number(dynamic value) {
+    if (value is num) return value.toDouble();
+    return double.tryParse('$value') ?? 0;
+  }
 }

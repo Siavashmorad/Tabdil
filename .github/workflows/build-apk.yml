@@ -79,6 +79,17 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
+      - name: Patch wakelock_plus Gradle for Flutter 3.24
+        run: |
+          WakelockGradle="$PUB_CACHE/hosted/pub.dev/wakelock_plus-1.4.0/android/build.gradle"
+          test -f "$WakelockGradle"
+          sed -i \
+            -e 's/flutter\.compileSdkVersion/34/g' \
+            -e 's/flutter\.minSdkVersion/21/g' \
+            -e 's/flutter\.targetSdkVersion/34/g' \
+            "$WakelockGradle"
+          grep -q "compileSdkVersion 34" "$WakelockGradle"
+
       - name: Format Dart sources
         run: dart format lib test
 

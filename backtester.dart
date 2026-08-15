@@ -61,11 +61,6 @@ class BacktestReport {
 /// to and including the current index are visible to the engine), then
 /// simulates trade outcomes against subsequent price action using a simple
 /// TP1/SL exit model.
-///
-/// This is a simplified, single-position-at-a-time simulator suitable for
-/// sanity-checking the ensemble engine's historical behavior on a phone —
-/// not an institutional-grade backtesting framework (no slippage, fee, or
-/// partial-fill modeling beyond a flat fee assumption).
 class Backtester {
   final SignalEngine engine;
   final int minHistoryBars;
@@ -74,7 +69,7 @@ class Backtester {
   Backtester({
     SignalEngine? engine,
     this.minHistoryBars = 60,
-    this.feePercentPerSide = 0.1, // Tabdeal-style ~0.1% taker fee assumption
+    this.feePercentPerSide = 0.1,
   }) : engine = engine ?? SignalEngine();
 
   BacktestReport run({
@@ -87,15 +82,18 @@ class Backtester {
     int i = minHistoryBars;
 
     while (i < candles.length - 1) {
-      final windowCandles = candles.sublist(0, i + 1); // no lookahead
-      final signal = engine.analyze(symbol: symbol, exchange: 'Tabdeal', candles: windowCandles);
+      final windowCandles = candles.sublist(0, i + 1);
+      final signal = engine.analyze(
+        symbol: symbol,
+        exchange: 'Tabdeal',
+        candles: windowCandles,
+      );
 
       if (signal == null) {
         i++;
         continue;
       }
 
-      // Simulate forward from the next candle until SL or TP1 is hit.
       final entryPrice = candles[i].close;
       final isLong = signal.direction == SignalDirection.long;
       int j = i + 1;
@@ -105,11 +103,13 @@ class Backtester {
 
       while (j < candles.length) {
         final c = candles[j];
-        final hitSl = isLong ? c.low <= signal.stopLoss : c.high >= signal.stopLoss;
-        final hitTp = isLong ? c.high >= signal.takeProfit1 : c.low <= signal.takeProfit1;
+        final hitSl = isLong
+            ? c.low <= signal.stopLoss
+            : c.high >= signal.stopLoss;
+        final hitTp = isLong
+            ? c.high >= signal.takeProfit1
+            : c.low <= signal.takeProfit1;
 
-        // Conservative assumption: if both SL and TP are within the same
-        // candle's range, assume SL is hit first (worst-case ordering).
         if (hitSl) {
           exitPrice = signal.stopLoss;
           exitReason = 'SL';
@@ -133,19 +133,20 @@ class Backtester {
           : (entryPrice - exitPrice) / entryPrice * 100;
       final netPnlPercent = rawPnlPercent - (feePercentPerSide * 2);
 
-      trades.add(BacktestTrade(
-        entryTime: candles[i].openTime,
-        exitTime: exitTime,
-        direction: signal.direction,
-        entryPrice: entryPrice,
-        exitPrice: exitPrice,
-        stopLoss: signal.stopLoss,
-        takeProfit1: signal.takeProfit1,
-        exitReason: exitReason,
-        pnlPercent: netPnlPercent,
-      ));
+      trades.add(
+        BacktestTrade(
+          entryTime: candles[i].openTime,
+          exitTime: exitTime,
+          direction: signal.direction,
+          entryPrice: entryPrice,
+          exitPrice: exitPrice,
+          stopLoss: signal.stopLoss,
+          takeProfit1: signal.takeProfit1,
+          exitReason: exitReason,
+          pnlPercent: netPnlPercent,
+        ),
+      );
 
-      // Move forward past this trade's exit to avoid overlapping positions.
       i = j > i ? j + 1 : i + 1;
     }
 
@@ -157,17 +158,17 @@ class Backtester {
 
     final wins = trades.where((t) => t.pnlPercent > 0).toList();
     final losses = trades.where((t) => t.pnlPercent <= 0).toList();
-
     final winRate = wins.length / trades.length * 100;
 
-    final grossProfit = wins.fold<double>(0, (a, t) => a + t.pnlPercent);
-    final grossLoss = losses.fold<double>(0, (a, t) => a + t.pnlPercent.abs());
-    final profitFactor = grossLoss == 0 ? (grossProfit > 0 ? double.infinity : 0) : grossProfit / grossLoss;
+    final grossProfit = wins.fold<double>(0.0, (a, t) => a + t.pnlPercent);
+    final grossLoss = losses.fold<double>(0.0, (a, t) => a + t.pnlPercent.abs());
+    final profitFactor = grossLoss == 0
+        ? (grossProfit > 0 ? double.infinity : 0.0)
+        : grossProfit / grossLoss;
 
-    // Equity curve (cumulative % return, compounded).
-    double equity = 100;
-    double peak = 100;
-    double maxDrawdown = 0;
+    double equity = 100.0;
+    double peak = 100.0;
+    double maxDrawdown = 0.0;
     final returns = <double>[];
     for (final t in trades) {
       equity *= (1 + t.pnlPercent / 100);
@@ -176,32 +177,34 @@ class Backtester {
       final drawdown = (peak - equity) / peak * 100;
       if (drawdown > maxDrawdown) maxDrawdown = drawdown;
     }
-    final totalReturn = equity - 100;
+    final totalReturn = equity - 100.0;
 
-    // Simple per-trade Sharpe-style ratio (mean / stddev of trade returns).
-    final meanReturn = returns.fold<double>(0.0, (a, b) => a + b) / returns.length;
-    final variance = returns.fold<double>(0.0, (a, b) => a + (b - meanReturn) * (b - meanReturn)) / returns.length;
-    final stdDev = variance <= 0 ? 0.0 : _sqrt(variance);
-    final sharpe = stdDev == 0 ? 0.0 : meanReturn / stdDev;
+    final double meanReturn =
+        returns.fold<double>(0.0, (a, b) => a + b) / returns.length;
+    final double variance =
+        returns.fold<double>(0.0, (a, b) => a + (b - meanReturn) * (b - meanReturn)) /
+            returns.length;
+    final double stdDev = variance <= 0.0 ? 0.0 : _sqrt(variance);
+    final double sharpe = stdDev == 0.0 ? 0.0 : meanReturn / stdDev;
 
     return BacktestReport(
       trades: trades,
-      winRatePercent: winRate,
-      profitFactor: profitFactor.isFinite ? profitFactor : 99.99,
+      winRatePercent: winRate.toDouble(),
+      profitFactor: profitFactor.isFinite ? profitFactor.toDouble() : 99.99,
       maxDrawdownPercent: maxDrawdown,
-      sharpeRatio: sharpe.toDouble(),
+      sharpeRatio: sharpe,
       totalReturnPercent: totalReturn,
       totalTrades: trades.length,
     );
   }
 
   double _sqrt(double value) {
-    if (value <= 0) return 0.0;
+    if (value <= 0.0) return 0.0;
     double x = value;
     double prev;
     do {
       prev = x;
-      x = (x + value / x) / 2;
+      x = (x + value / x) / 2.0;
     } while ((x - prev).abs() > 1e-10);
     return x;
   }

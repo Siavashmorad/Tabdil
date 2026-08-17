@@ -4,10 +4,10 @@ import re
 import sys
 from pathlib import Path
 
-# Flutter 3.24's generated Android/AGP stack is compatible with the 2.1.2
-# desugar library. Keep this version aligned instead of pulling newer
-# desugar metadata that can make D8 fail while merging release dex files.
-DESUGAR_VERSION = "2.1.2"
+# The previous 2.1.x desugar metadata caused D8 to throw
+# "This is not a JSON Array" for the whole runtime classpath. Use the
+# compatible 2.0.4 metadata with the upgraded AGP/D8 toolchain.
+DESUGAR_VERSION = "2.0.4"
 GROOVY_PATH = Path("android/app/build.gradle")
 KOTLIN_PATH = Path("android/app/build.gradle.kts")
 
@@ -38,8 +38,6 @@ def patch_groovy(path: Path) -> None:
         content = content.rstrip() + "\n\nandroid {\n    buildTypes {\n        release {\n            minifyEnabled false\n            shrinkResources false\n        }\n    }\n}\n"
         changed = True
 
-    # Avoid the known generated lintVitalAnalyzeRelease/D8 path; Dart analyze
-    # and flutter test remain explicit CI gates.
     if "lintVitalAnalyzeRelease" not in content:
         content = content.rstrip() + "\n\ntasks.configureEach { task ->\n    if (task.name == 'lintVitalAnalyzeRelease') {\n        task.enabled = false\n    }\n}\n"
         changed = True

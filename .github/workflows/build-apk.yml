@@ -58,10 +58,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [ ! -f android/settings.gradle ] || \
-             [ ! -f android/app/build.gradle ] || \
-             [ ! -f android/gradle/wrapper/gradle-wrapper.properties ] || \
-             [ ! -f android/app/src/main/AndroidManifest.xml ]; then
+          if [ ! -f android/settings.gradle ] || [ ! -f android/app/build.gradle ] || [ ! -f android/gradle/wrapper/gradle-wrapper.properties ] || [ ! -f android/app/src/main/AndroidManifest.xml ]; then
             echo 'Android platform is incomplete; generating missing platform files with Flutter.'
             flutter create --platforms=android --org com.tabdealtrader --project-name tabdil --no-pub .
           fi
@@ -85,7 +82,8 @@ jobs:
               '    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />',
           ]
           for perm in perms:
-              if perm.split('name="',1)[1].split('"',1)[0] not in s:
+              name = perm.split('name="',1)[1].split('"',1)[0]
+              if name not in s:
                   s = s.replace('<application', perm + '\n    <application', 1)
           p.write_text(s)
           PY
@@ -131,8 +129,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          CACHE_DIR="$(dart pub cache path)"
-          test -n "$CACHE_DIR"
+          if [ -n "${PUB_CACHE:-}" ]; then
+            CACHE_DIR="$PUB_CACHE"
+          else
+            CACHE_DIR="$HOME/.pub-cache"
+          fi
+          CACHE_DIR="$(cd "$CACHE_DIR" 2>/dev/null && pwd || true)"
+          if [ -z "$CACHE_DIR" ]; then
+            echo 'ERROR: Pub cache directory could not be resolved.' >&2
+            exit 1
+          fi
+          echo "Using Pub cache: $CACHE_DIR"
           WakelockGradle="$(find "$CACHE_DIR/hosted/pub.dev" -path '*/wakelock_plus-*/android/build.gradle' -type f -print -quit 2>/dev/null || true)"
           echo "wakelock_gradle=$WakelockGradle" >> "$GITHUB_OUTPUT"
 

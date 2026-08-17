@@ -102,9 +102,10 @@ jobs:
           grep -q 'android.permission.INTERNET' "$M"
           grep -q 'android.permission.ACCESS_NETWORK_STATE' "$M"
 
-      - name: Configure compile SDK
+      - name: Configure Android SDK and NDK
         shell: bash
         run: |
+          set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
           import re
@@ -112,8 +113,11 @@ jobs:
           if re.search(r'compileSdk\s*=\s*',s): s=re.sub(r'compileSdk\s*=\s*[^\n]+','compileSdk = 35',s,count=1)
           elif re.search(r'compileSdkVersion\s+',s): s=re.sub(r'compileSdkVersion\s+\S+','compileSdkVersion 35',s,count=1)
           else: s=s.replace('android {','android {\n    compileSdkVersion 35',1)
+          if 'ndkVersion' in s: s=re.sub(r'ndkVersion\s*=\s*[^\n]+|ndkVersion\s+[^\n]+','ndkVersion = "27.0.12077973"',s,count=1)
+          else: s=s.replace('android {','android {\n    ndkVersion = "27.0.12077973"',1)
           p.write_text(s)
           PY
+          grep -Eq 'ndkVersion.*27\.0\.12077973' android/app/build.gradle
 
       - name: Enable core library desugaring
         run: python3 patch_android_desugaring.py
@@ -149,7 +153,6 @@ jobs:
           cat > test/widget_test.dart <<'EOF'
           import 'package:flutter_test/flutter_test.dart';
           import 'package:crypto_trader/main.dart';
-
           void main() {
             testWidgets('Tabdil app smoke test', (tester) async {
               await tester.pumpWidget(const CryptoTraderApp());
@@ -171,6 +174,7 @@ jobs:
           grep -Eq 'org\.jetbrains\.kotlin\.android.*2\.2\.0' android/settings.gradle
           grep -q 'gradle-8.10.2-bin.zip' android/gradle/wrapper/gradle-wrapper.properties
           grep -q 'android.permission.INTERNET' android/app/src/main/AndroidManifest.xml
+          grep -Eq 'ndkVersion.*27\.0\.12077973' android/app/build.gradle
 
       - name: Analyze Dart
         run: flutter analyze --no-fatal-infos
@@ -186,13 +190,25 @@ jobs:
         working-directory: android
         run: ./gradlew :app:assembleRelease --stacktrace --no-daemon
 
-      - name: Verify and stage APK
+      - name: Locate APK output
+        id: apk
         shell: bash
         run: |
           set -euo pipefail
-          APK="$(find android/app/build/outputs/apk/release -type f -name '*.apk' -print -quit)"
+          echo 'Searching Gradle outputs:'
+          find android -type f \( -name '*.apk' -o -name '*.aab' \) -print
+          APK="$(find android -type f -name '*.apk' -path '*/outputs/*' -print -quit)"
           test -n "$APK"
-          cp "$APK" app-release.apk
+          echo "path=$APK" >> "$GITHUB_OUTPUT"
+          echo "Found APK: $APK"
+
+      - name: Verify and stage APK
+        env:
+          APK_PATH: ${{ steps.apk.outputs.path }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp "$APK_PATH" app-release.apk
           test -s app-release.apk
           sha256sum app-release.apk
           ls -lh app-release.apk

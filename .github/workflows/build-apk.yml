@@ -51,6 +51,22 @@ jobs:
               .
           fi
 
+      - name: Align generated Kotlin plugin for Flutter 3.24
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          p = Path('android/settings.gradle')
+          s = p.read_text()
+          pattern = r"(id ['\"]org\\.jetbrains\\.kotlin\\.android['\"] version ['\"])[^'\"]+(['\"])"
+          updated, count = re.subn(pattern, r"\\g<1>1.9.24\\g<2>", s)
+          if count != 1:
+              raise SystemExit(f'Expected exactly one Kotlin Android plugin declaration, found {count}')
+          p.write_text(updated)
+          print('Configured Kotlin Android Gradle plugin 1.9.24.')
+          PY
+          grep -q "org.jetbrains.kotlin.android.*1.9.24" android/settings.gradle
+
       - name: Fix generated Flutter smoke test
         run: |
           mkdir -p test

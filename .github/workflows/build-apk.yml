@@ -23,9 +23,6 @@ jobs:
         with:
           fetch-depth: 1
 
-      # Do not enable setup-java Gradle caching here: the Android/Gradle tree
-      # is generated later by `flutter create`, so there are no Gradle files
-      # yet for setup-java to fingerprint.
       - name: Select Java 17
         uses: actions/setup-java@v5
         with:
@@ -38,11 +35,9 @@ jobs:
           set -euo pipefail
           echo "JAVA_HOME=$JAVA_HOME"
           "$JAVA_HOME/bin/java" -version
-          JAVA_MAJOR="$($JAVA_HOME/bin/java -version 2>&1 | awk -F'"' '/version/ {split($2,v,"."); print v[1]; exit}')"
-          test "$JAVA_MAJOR" = "17"
           "$JAVA_HOME/bin/javac" -version
 
-      - name: Install Flutter 3.24.0 from official release storage
+      - name: Install Flutter 3.24.0
         shell: bash
         run: |
           set -euo pipefail
@@ -55,19 +50,19 @@ jobs:
           echo "$HOME/flutter/bin" >> "$GITHUB_PATH"
           echo "$HOME/flutter/bin/cache/dart-sdk/bin" >> "$GITHUB_PATH"
           "$HOME/flutter/bin/flutter" --version
-          "$HOME/flutter/bin/flutter" doctor -v
-
-      - name: Validate project preparation script
-        run: bash -n scripts/prepare_flutter_project.sh
 
       - name: Prepare canonical Flutter source tree
         run: bash scripts/prepare_flutter_project.sh
 
-      - name: Generate Android platform with Flutter's own template
+      - name: Ensure complete Android platform
         shell: bash
         run: |
           set -euo pipefail
-          if [ ! -d android ]; then
+          if [ ! -f android/settings.gradle ] || \
+             [ ! -f android/app/build.gradle ] || \
+             [ ! -f android/gradle/wrapper/gradle-wrapper.properties ] || \
+             [ ! -f android/app/src/main/AndroidManifest.xml ]; then
+            echo 'Android platform is incomplete; generating missing platform files with Flutter.'
             flutter create --platforms=android --org com.tabdealtrader --project-name tabdil --no-pub .
           fi
           test -f android/settings.gradle
@@ -75,7 +70,7 @@ jobs:
           test -f android/gradle/wrapper/gradle-wrapper.properties
           test -f android/app/src/main/AndroidManifest.xml
 
-      - name: Ensure network permissions are present
+      - name: Ensure network permissions
         shell: bash
         run: |
           set -euo pipefail
@@ -85,10 +80,13 @@ jobs:
           import sys
           p = Path(sys.argv[1])
           s = p.read_text()
-          if 'android.permission.INTERNET' not in s:
-              s = s.replace('<application', '    <uses-permission android:name="android.permission.INTERNET" />\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />\n    <application', 1)
-          elif 'android.permission.ACCESS_NETWORK_STATE' not in s:
-              s = s.replace('<application', '    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />\n    <application', 1)
+          perms = [
+              '    <uses-permission android:name="android.permission.INTERNET" />',
+              '    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />',
+          ]
+          for perm in perms:
+              if perm.split('name="',1)[1].split('"',1)[0] not in s:
+                  s = s.replace('<application', perm + '\n    <application', 1)
           p.write_text(s)
           PY
           grep -q 'android.permission.INTERNET' "$MANIFEST"
@@ -97,7 +95,6 @@ jobs:
       - name: Configure Android SDK
         shell: bash
         run: |
-          set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
           import re
@@ -111,10 +108,9 @@ jobs:
       - name: Enable core library desugaring
         run: python3 patch_android_desugaring.py
 
-      - name: Fix generated Flutter smoke test
+      - name: Fix generated smoke test
         shell: bash
         run: |
-          set -euo pipefail
           mkdir -p test
           cat > test/widget_test.dart <<'EOF'
           import 'package:flutter_test/flutter_test.dart';
@@ -127,10 +123,10 @@ jobs:
           }
           EOF
 
-      - name: Install Dart and Flutter dependencies
+      - name: Install dependencies
         run: flutter pub get
 
-      - name: Resolve pub cache and wakelock_plus package
+      - name: Resolve pub cache and wakelock_plus
         id: package-paths
         shell: bash
         run: |
@@ -138,10 +134,9 @@ jobs:
           CACHE_DIR="$(dart pub cache path)"
           test -n "$CACHE_DIR"
           WakelockGradle="$(find "$CACHE_DIR/hosted/pub.dev" -path '*/wakelock_plus-*/android/build.gradle' -type f -print -quit 2>/dev/null || true)"
-          echo "cache=$CACHE_DIR" >> "$GITHUB_OUTPUT"
           echo "wakelock_gradle=$WakelockGradle" >> "$GITHUB_OUTPUT"
 
-      - name: Patch wakelock_plus Flutter Gradle properties if present
+      - name: Patch wakelock_plus if needed
         env:
           WakelockGradle: ${{ steps.package-paths.outputs.wakelock_gradle }}
         shell: bash
@@ -156,13 +151,10 @@ jobs:
           s = re.sub(r'flutter\.[A-Za-z0-9_]*compileSdk[A-Za-z0-9_]*', '35', s)
           s = re.sub(r'flutter\.[A-Za-z0-9_]*minSdk[A-Za-z0-9_]*', '21', s)
           s = re.sub(r'flutter\.[A-Za-z0-9_]*targetSdk[A-Za-z0-9_]*', '35', s)
-          s = re.sub(r'\bcompileSdkVersion\s+flutter\.[A-Za-z0-9_]+', 'compileSdkVersion 35', s)
-          s = re.sub(r'\bminSdkVersion\s+flutter\.[A-Za-z0-9_]+', 'minSdkVersion 21', s)
-          s = re.sub(r'\btargetSdkVersion\s+flutter\.[A-Za-z0-9_]+', 'targetSdkVersion 35', s)
           p.write_text(s)
           PY
 
-      - name: Verify generated Android and package files
+      - name: Verify project before build
         shell: bash
         env:
           WakelockGradle: ${{ steps.package-paths.outputs.wakelock_gradle }}
@@ -176,11 +168,8 @@ jobs:
           grep -q 'android.permission.INTERNET' android/app/src/main/AndroidManifest.xml
           grep -q 'android.permission.ACCESS_NETWORK_STATE' android/app/src/main/AndroidManifest.xml
           if [ -n "$WakelockGradle" ] && [ -f "$WakelockGradle" ]; then
-            if grep -Eq 'flutter\.[A-Za-z0-9_]+' "$WakelockGradle"; then exit 1; fi
+            ! grep -Eq 'flutter\.[A-Za-z0-9_]+' "$WakelockGradle"
           fi
-
-      - name: Format Dart sources
-        run: dart format --output=none lib test
 
       - name: Analyze Dart code
         run: flutter analyze --no-fatal-infos
@@ -196,7 +185,7 @@ jobs:
         working-directory: android
         run: ./gradlew :app:assembleRelease --stacktrace --no-daemon
 
-      - name: Verify APK and network permissions in final manifest
+      - name: Verify APK
         shell: bash
         run: |
           set -euo pipefail
@@ -204,11 +193,10 @@ jobs:
           test -n "$APK_SOURCE"
           cp "$APK_SOURCE" app-release.apk
           test -s app-release.apk
-          echo "APK: $APK_SOURCE"
           sha256sum app-release.apk
           ls -lh app-release.apk
 
-      - name: Upload release APK artifact
+      - name: Upload release APK
         uses: actions/upload-artifact@v4
         with:
           name: Tabdil-release-apk

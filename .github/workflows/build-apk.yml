@@ -157,12 +157,29 @@ jobs:
         run: ./gradlew --init-script kotlin-toolchain.init.gradle :app:assembleRelease --stacktrace
         working-directory: android
 
+      - name: Locate and normalize release APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo 'APK files produced by Gradle:'
+          find android/app/build/outputs -type f -name '*.apk' -print
+          APK_SOURCE="$(find android/app/build/outputs -type f -name '*.apk' | head -n 1)"
+          if [ -z "$APK_SOURCE" ]; then
+            echo 'ERROR: Gradle completed but no APK file was produced.' >&2
+            exit 1
+          fi
+          cp "$APK_SOURCE" android/app-release.apk
+          test -s android/app-release.apk
+          echo "Normalized APK: android/app-release.apk"
+          ls -lh android/app-release.apk
+
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: app-release-apk
-          path: android/app/build/outputs/apk/release/app-release.apk
+          path: android/app-release.apk
           retention-days: 30
+          if-no-files-found: error
 
       - name: Create prerelease on main/master
         if: github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master')
@@ -170,5 +187,5 @@ jobs:
         with:
           tag_name: build-${{ github.run_number }}
           name: Auto build #${{ github.run_number }}
-          files: android/app/build/outputs/apk/release/app-release.apk
+          files: android/app-release.apk
           prerelease: true

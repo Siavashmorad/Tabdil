@@ -59,7 +59,6 @@ jobs:
         run: |
           set -euo pipefail
           if [ ! -f android/settings.gradle ] || [ ! -f android/app/build.gradle ] || [ ! -f android/gradle/wrapper/gradle-wrapper.properties ] || [ ! -f android/app/src/main/AndroidManifest.xml ]; then
-            echo 'Android platform is incomplete; generating missing platform files with Flutter.'
             flutter create --platforms=android --org com.tabdealtrader --project-name tabdil --no-pub .
           fi
           test -f android/settings.gradle
@@ -67,7 +66,7 @@ jobs:
           test -f android/gradle/wrapper/gradle-wrapper.properties
           test -f android/app/src/main/AndroidManifest.xml
 
-      - name: Align Android Kotlin and Gradle toolchain
+      - name: Align Android Gradle and Kotlin toolchain
         shell: bash
         run: |
           set -euo pipefail
@@ -77,9 +76,12 @@ jobs:
 
           settings = Path('android/settings.gradle')
           s = settings.read_text()
+          s = re.sub(r'(id\s+["\']com\.android\.application["\']\s+version\s+)["\'][^"\']+["\']', r'\g<1>"8.7.3"', s)
           s = re.sub(r'(id\s+["\']org\.jetbrains\.kotlin\.android["\']\s+version\s+)["\'][^"\']+["\']', r'\g<1>"2.2.0"', s)
+          if 'com.android.application' not in s:
+              raise SystemExit('Android Gradle plugin declaration not found')
           if 'org.jetbrains.kotlin.android' not in s:
-              raise SystemExit('Kotlin Android plugin declaration not found in android/settings.gradle')
+              raise SystemExit('Kotlin Android plugin declaration not found')
           settings.write_text(s)
 
           wrapper = Path('android/gradle/wrapper/gradle-wrapper.properties')
@@ -87,7 +89,7 @@ jobs:
           w = re.sub(r'distributionUrl=.*', 'distributionUrl=https\\://services.gradle.org/distributions/gradle-8.10.2-bin.zip', w)
           wrapper.write_text(w)
           PY
-          grep -n 'org.jetbrains.kotlin.android' android/settings.gradle
+          grep -nE 'com.android.application|org.jetbrains.kotlin.android' android/settings.gradle
           grep -n 'distributionUrl=' android/gradle/wrapper/gradle-wrapper.properties
 
       - name: Ensure network permissions
@@ -100,14 +102,9 @@ jobs:
           import sys
           p = Path(sys.argv[1])
           s = p.read_text()
-          perms = [
-              '    <uses-permission android:name="android.permission.INTERNET" />',
-              '    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />',
-          ]
-          for perm in perms:
-              name = perm.split('name="',1)[1].split('"',1)[0]
+          for name in ('android.permission.INTERNET', 'android.permission.ACCESS_NETWORK_STATE'):
               if name not in s:
-                  s = s.replace('<application', perm + '\n    <application', 1)
+                  s = s.replace('<application', f'    <uses-permission android:name="{name}" />\n    <application', 1)
           p.write_text(s)
           PY
           grep -q 'android.permission.INTERNET' "$MANIFEST"
@@ -155,12 +152,10 @@ jobs:
           if [ -n "${PUB_CACHE:-}" ]; then CACHE_DIR="$PUB_CACHE"; else CACHE_DIR="$HOME/.pub-cache"; fi
           CACHE_DIR="$(cd "$CACHE_DIR" 2>/dev/null && pwd || true)"
           test -n "$CACHE_DIR"
-          echo "Using Pub cache: $CACHE_DIR"
           WakelockGradle="$(find "$CACHE_DIR/hosted/pub.dev" -path '*/wakelock_plus-*/android/build.gradle' -type f -not -path '*/example/*' -print -quit 2>/dev/null || true)"
-          echo "wakelock_gradle=$WakelockGradle" >> "$GITHUB_OUTPUT"
           test -n "$WakelockGradle"
-          test -f "$WakelockGradle"
-          case "$WakelockGradle" in */example/*) echo 'ERROR: selected wakelock_plus example build.gradle' >&2; exit 1;; esac
+          case "$WakelockGradle" in */example/*) exit 1;; esac
+          echo "wakelock_gradle=$WakelockGradle" >> "$GITHUB_OUTPUT"
 
       - name: Patch wakelock_plus root Android plugin
         env:

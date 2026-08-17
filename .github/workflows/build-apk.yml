@@ -23,13 +23,22 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Verify Java 17
+      - name: Select and verify Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Verify Java toolchain
         shell: bash
         run: |
           set -euo pipefail
-          java -version
-          JAVA_MAJOR="$(java -version 2>&1 | sed -n 's/.*version \"\([0-9]*\).*/\1/p' | head -n1)"
+          echo "JAVA_HOME=$JAVA_HOME"
+          "$JAVA_HOME/bin/java" -version
+          JAVA_MAJOR="$($JAVA_HOME/bin/java -version 2>&1 | awk -F'"' '/version/ {split($2,v,"."); print v[1]; exit}')"
           test "$JAVA_MAJOR" = "17"
+          "$JAVA_HOME/bin/javac" -version
 
       - name: Install Flutter 3.24.0 from official release storage
         shell: bash
@@ -62,15 +71,34 @@ jobs:
           test -f android/settings.gradle
           test -f android/app/build.gradle
           test -f android/gradle/wrapper/gradle-wrapper.properties
+          test -f android/app/src/main/AndroidManifest.xml
 
-      - name: Configure Android SDK without replacing Flutter's generated toolchain
+      - name: Ensure network permissions are present
+        shell: bash
+        run: |
+          set -euo pipefail
+          MANIFEST=android/app/src/main/AndroidManifest.xml
+          python3 - "$MANIFEST" <<'PY'
+          from pathlib import Path
+          import sys
+          p = Path(sys.argv[1])
+          s = p.read_text()
+          if 'android.permission.INTERNET' not in s:
+              s = s.replace('<application', '    <uses-permission android:name="android.permission.INTERNET" />\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />\n    <application', 1)
+          elif 'android.permission.ACCESS_NETWORK_STATE' not in s:
+              s = s.replace('<application', '    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />\n    <application', 1)
+          p.write_text(s)
+          PY
+          grep -q 'android.permission.INTERNET' "$MANIFEST"
+          grep -q 'android.permission.ACCESS_NETWORK_STATE' "$MANIFEST"
+
+      - name: Configure Android SDK
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
           import re
-
           app = Path('android/app/build.gradle')
           s = app.read_text()
           s = re.sub(r'compileSdk\s*=\s*[^\n]+', 'compileSdk = 35', s, count=1)
@@ -89,7 +117,6 @@ jobs:
           cat > test/widget_test.dart <<'EOF'
           import 'package:flutter_test/flutter_test.dart';
           import 'package:crypto_trader/main.dart';
-
           void main() {
             testWidgets('app smoke test', (tester) async {
               await tester.pumpWidget(const CryptoTraderApp());
@@ -111,8 +138,6 @@ jobs:
           WakelockGradle="$(find "$CACHE_DIR/hosted/pub.dev" -path '*/wakelock_plus-*/android/build.gradle' -type f -print -quit 2>/dev/null || true)"
           echo "cache=$CACHE_DIR" >> "$GITHUB_OUTPUT"
           echo "wakelock_gradle=$WakelockGradle" >> "$GITHUB_OUTPUT"
-          echo "Dart pub cache: $CACHE_DIR"
-          if [ -n "$WakelockGradle" ]; then echo "wakelock_plus Gradle: $WakelockGradle"; fi
 
       - name: Patch wakelock_plus Flutter Gradle properties if present
         env:
@@ -120,15 +145,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [ -z "$WakelockGradle" ] || [ ! -f "$WakelockGradle" ]; then
-            echo 'wakelock_plus Gradle file not found; no package patch required.'
-            exit 0
-          fi
+          if [ -z "$WakelockGradle" ] || [ ! -f "$WakelockGradle" ]; then exit 0; fi
           python3 - "$WakelockGradle" <<'PY'
           from pathlib import Path
-          import re
-          import sys
-
+          import re, sys
           p = Path(sys.argv[1])
           s = p.read_text()
           s = re.sub(r'flutter\.[A-Za-z0-9_]*compileSdk[A-Za-z0-9_]*', '35', s)
@@ -149,13 +169,12 @@ jobs:
           test -f android/settings.gradle
           test -f android/app/build.gradle
           test -f android/gradle/wrapper/gradle-wrapper.properties
+          test -f android/app/src/main/AndroidManifest.xml
           grep -q 'dev.flutter.flutter-gradle-plugin' android/app/build.gradle
+          grep -q 'android.permission.INTERNET' android/app/src/main/AndroidManifest.xml
+          grep -q 'android.permission.ACCESS_NETWORK_STATE' android/app/src/main/AndroidManifest.xml
           if [ -n "$WakelockGradle" ] && [ -f "$WakelockGradle" ]; then
-            if grep -Eq 'flutter\.[A-Za-z0-9_]+' "$WakelockGradle"; then
-              echo 'ERROR: unresolved Flutter Gradle property remains in wakelock_plus.'
-              grep -nE 'flutter\.[A-Za-z0-9_]+' "$WakelockGradle" || true
-              exit 1
-            fi
+            if grep -Eq 'flutter\.[A-Za-z0-9_]+' "$WakelockGradle"; then exit 1; fi
           fi
 
       - name: Format Dart sources
@@ -167,7 +186,7 @@ jobs:
       - name: Run Flutter tests
         run: flutter test
 
-      - name: Verify Gradle configuration before release build
+      - name: Verify Gradle configuration
         working-directory: android
         run: ./gradlew --version
 
@@ -175,21 +194,15 @@ jobs:
         working-directory: android
         run: ./gradlew :app:assembleRelease --stacktrace --no-daemon
 
-      - name: Locate and normalize release APK
+      - name: Verify APK and network permissions in final manifest
         shell: bash
         run: |
           set -euo pipefail
-          APK_SOURCE="$(find android -type f -name '*.apk' -not -path '*/build/intermediates/*' -print -quit)"
-          if [ -z "$APK_SOURCE" ]; then
-            APK_SOURCE="$(find android -type f -name '*.apk' -print -quit)"
-          fi
-          if [ -z "$APK_SOURCE" ]; then
-            echo 'ERROR: Gradle finished without producing an APK.' >&2
-            find android -type f -name '*.apk' -print || true
-            exit 1
-          fi
+          APK_SOURCE="$(find android/app/build/outputs/apk/release -type f -name '*.apk' -print -quit)"
+          test -n "$APK_SOURCE"
           cp "$APK_SOURCE" app-release.apk
           test -s app-release.apk
+          echo "APK: $APK_SOURCE"
           sha256sum app-release.apk
           ls -lh app-release.apk
 

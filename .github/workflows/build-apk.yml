@@ -67,6 +67,29 @@ jobs:
           test -f android/gradle/wrapper/gradle-wrapper.properties
           test -f android/app/src/main/AndroidManifest.xml
 
+      - name: Align Android Kotlin and Gradle toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          settings = Path('android/settings.gradle')
+          s = settings.read_text()
+          s = re.sub(r'(id\s+["\']org\.jetbrains\.kotlin\.android["\']\s+version\s+)["\'][^"\']+["\']', r'\g<1>"2.2.0"', s)
+          if 'org.jetbrains.kotlin.android' not in s:
+              raise SystemExit('Kotlin Android plugin declaration not found in android/settings.gradle')
+          settings.write_text(s)
+
+          wrapper = Path('android/gradle/wrapper/gradle-wrapper.properties')
+          w = wrapper.read_text()
+          w = re.sub(r'distributionUrl=.*', 'distributionUrl=https\\://services.gradle.org/distributions/gradle-8.10.2-bin.zip', w)
+          wrapper.write_text(w)
+          PY
+          grep -n 'org.jetbrains.kotlin.android' android/settings.gradle
+          grep -n 'distributionUrl=' android/gradle/wrapper/gradle-wrapper.properties
+
       - name: Ensure network permissions
         shell: bash
         run: |

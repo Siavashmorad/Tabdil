@@ -135,7 +135,19 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
+      - name: Resolve pub cache path
+        id: pub-cache
+        shell: bash
+        run: |
+          set -euo pipefail
+          CACHE_DIR="$(dart pub cache path)"
+          test -n "$CACHE_DIR"
+          echo "path=$CACHE_DIR" >> "$GITHUB_OUTPUT"
+          echo "PUB_CACHE resolved to: $CACHE_DIR"
+
       - name: Patch wakelock_plus Gradle for Flutter 3.24
+        env:
+          PUB_CACHE: ${{ steps.pub-cache.outputs.path }}
         run: |
           set -euo pipefail
           WakelockGradle="$PUB_CACHE/hosted/pub.dev/wakelock_plus-1.4.0/android/build.gradle"
@@ -159,6 +171,8 @@ jobs:
           PY
 
       - name: Verify wakelock_plus Gradle patch (diagnostic only)
+        env:
+          PUB_CACHE: ${{ steps.pub-cache.outputs.path }}
         run: |
           WakelockGradle="$PUB_CACHE/hosted/pub.dev/wakelock_plus-1.4.0/android/build.gradle"
           if [ -f "$WakelockGradle" ]; then

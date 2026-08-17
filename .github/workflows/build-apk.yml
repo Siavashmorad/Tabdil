@@ -51,21 +51,46 @@ jobs:
               .
           fi
 
-      - name: Align generated Kotlin plugin for Flutter 3.24
+      - name: Align Android build toolchain for Flutter 3.24
         run: |
           python3 - <<'PY'
           from pathlib import Path
           import re
-          p = Path('android/settings.gradle')
-          s = p.read_text()
-          pattern = r"(id ['\"]org\.jetbrains\.kotlin\.android['\"] version ['\"])[^'\"]+(['\"])"
-          updated, count = re.subn(pattern, r"\g<1>1.9.24\g<2>", s)
-          if count != 1:
-              raise SystemExit(f'Expected exactly one Kotlin Android plugin declaration, found {count}')
-          p.write_text(updated)
-          print('Configured Kotlin Android Gradle plugin 1.9.24.')
+
+          settings = Path('android/settings.gradle')
+          text = settings.read_text()
+          text, agp_count = re.subn(
+              r"(id ['\"]com\.android\.application['\"] version ['\"])[^'\"]+(['\"])",
+              r"\g<1>8.3.2\g<2>",
+              text,
+              count=1,
+          )
+          text, kotlin_count = re.subn(
+              r"(id ['\"]org\.jetbrains\.kotlin\.android['\"] version ['\"])[^'\"]+(['\"])",
+              r"\g<1>1.9.24\g<2>",
+              text,
+              count=1,
+          )
+          if agp_count != 1 or kotlin_count != 1:
+              raise SystemExit(f'Expected one AGP and one Kotlin declaration; got AGP={agp_count}, Kotlin={kotlin_count}')
+          settings.write_text(text)
+
+          wrapper = Path('android/gradle/wrapper/gradle-wrapper.properties')
+          wrapper_text = wrapper.read_text()
+          wrapper_text, gradle_count = re.subn(
+              r"distributionUrl=.*",
+              "distributionUrl=https\\://services.gradle.org/distributions/gradle-8.4-bin.zip",
+              wrapper_text,
+              count=1,
+          )
+          if gradle_count != 1:
+              raise SystemExit('Gradle wrapper distributionUrl was not found')
+          wrapper.write_text(wrapper_text)
+          print('Configured AGP 8.3.2, Kotlin 1.9.24 and Gradle 8.4.')
           PY
+          grep -q "com.android.application.*8.3.2" android/settings.gradle
           grep -q "org.jetbrains.kotlin.android.*1.9.24" android/settings.gradle
+          grep -q "gradle-8.4-bin.zip" android/gradle/wrapper/gradle-wrapper.properties
 
       - name: Fix generated Flutter smoke test
         run: |
@@ -86,6 +111,7 @@ jobs:
         run: |
           test -f android/settings.gradle
           test -f android/app/build.gradle
+          test -f android/gradle/wrapper/gradle-wrapper.properties
           grep -q "dev.flutter.flutter-gradle-plugin" android/app/build.gradle
           grep -q "flutter.compileSdkVersion" android/app/build.gradle
 
@@ -106,6 +132,11 @@ jobs:
 
       - name: Build release APK
         run: flutter build apk --release --no-shrink
+
+      - name: Verify APK output
+        run: |
+          test -s build/app/outputs/flutter-apk/app-release.apk
+          ls -lh build/app/outputs/flutter-apk/app-release.apk
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4

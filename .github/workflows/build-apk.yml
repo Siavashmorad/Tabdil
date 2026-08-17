@@ -23,12 +23,14 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Select and verify Java 17
-        uses: actions/setup-java@v4
+      # Do not enable setup-java Gradle caching here: the Android/Gradle tree
+      # is generated later by `flutter create`, so there are no Gradle files
+      # yet for setup-java to fingerprint.
+      - name: Select Java 17
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
-          cache: gradle
 
       - name: Verify Java toolchain
         shell: bash

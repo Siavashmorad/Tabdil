@@ -18,9 +18,6 @@ jobs:
         with:
           fetch-depth: 1
 
-      # Avoid codeload.github.com rate limits from setup-java/flutter-action.
-      # GitHub-hosted Ubuntu images already provide a Java 17 runtime; Flutter is
-      # downloaded directly from Google's official Flutter release storage.
       - name: Verify Java 17
         run: |
           java -version
@@ -148,15 +145,25 @@ jobs:
           import sys
           p = Path(sys.argv[1])
           s = p.read_text()
-          for pattern, value in {
-              r'flutter\.compileSdkVersion': '35',
-              r'flutter\.minSdkVersion': '21',
-              r'flutter\.targetSdkVersion': '35',
-          }.items():
-              s = re.sub(pattern, value, s)
+          s = re.sub(r'flutter\.[A-Za-z0-9_]*compileSdk[A-Za-z0-9_]*', '35', s)
+          s = re.sub(r'flutter\.[A-Za-z0-9_]*minSdk[A-Za-z0-9_]*', '21', s)
+          s = re.sub(r'flutter\.[A-Za-z0-9_]*targetSdk[A-Za-z0-9_]*', '35', s)
+          s = re.sub(r'\bcompileSdkVersion\s+flutter\.[A-Za-z0-9_]+', 'compileSdkVersion 35', s)
+          s = re.sub(r'\bminSdkVersion\s+flutter\.[A-Za-z0-9_]+', 'minSdkVersion 21', s)
+          s = re.sub(r'\btargetSdkVersion\s+flutter\.[A-Za-z0-9_]+', 'targetSdkVersion 35', s)
           p.write_text(s)
+          remaining = re.findall(r'flutter\.[A-Za-z0-9_]+', s)
+          if remaining:
+              raise SystemExit('Unpatched Flutter Gradle properties remain: ' + ', '.join(sorted(set(remaining))))
           PY
           fi
+
+      - name: Verify wakelock_plus Gradle patch
+        run: |
+          WakelockGradle="$PUB_CACHE/hosted/pub.dev/wakelock_plus-1.4.0/android/build.gradle"
+          test -f "$WakelockGradle"
+          ! grep -Eq 'flutter\.[A-Za-z0-9_]+' "$WakelockGradle"
+          grep -Eq 'compileSdk(Version)?[[:space:]]*[=]?[[:space:]]*35' "$WakelockGradle"
 
       - name: Format Dart sources
         run: dart format lib test

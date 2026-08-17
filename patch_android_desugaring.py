@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Patch the generated Android app module for required release-build settings."""
+"""Patch the generated Android app module for release-build compatibility."""
 import re
 import sys
 from pathlib import Path
@@ -26,15 +26,20 @@ def patch_groovy(path: Path) -> None:
             content = content.rstrip() + f"\n\ndependencies {{\n{dep_line}\n}}\n"
         changed = True
 
-    # The generated Flutter/AGP stack on the runner has a broken
-    # lintVitalAnalyzeRelease -> D8 FakeDependency.jar path. Disable only that
-    # task; Dart analyze and flutter test remain explicit CI gates.
+    # Explicitly keep the release variant unminified. Flutter's --no-shrink
+    # flag alone does not override every generated AGP configuration.
+    if "minifyEnabled false" not in content:
+        content = content.rstrip() + "\n\nandroid {\n    buildTypes {\n        release {\n            minifyEnabled false\n            shrinkResources false\n        }\n    }\n}\n"
+        changed = True
+
+    # The runner's generated AGP/lint stack can fail in lintVitalAnalyzeRelease
+    # while processing its synthetic FakeDependency.jar. Disable only that task.
     if "lintVitalAnalyzeRelease" not in content:
         content = content.rstrip() + "\n\ntasks.configureEach { task ->\n    if (task.name == 'lintVitalAnalyzeRelease') {\n        task.enabled = false\n    }\n}\n"
         changed = True
 
     path.write_text(content)
-    print(f"Patched {path} (desugaring + release lint-task compatibility). changed={changed}")
+    print(f"Patched {path}. changed={changed}")
 
 
 def patch_kotlin(path: Path) -> None:
@@ -54,12 +59,16 @@ def patch_kotlin(path: Path) -> None:
             content = content.rstrip() + f"\n\ndependencies {{\n{dep_line}\n}}\n"
         changed = True
 
+    if "isMinifyEnabled = false" not in content:
+        content = content.rstrip() + "\n\nandroid {\n    buildTypes {\n        release {\n            isMinifyEnabled = false\n            isShrinkResources = false\n        }\n    }\n}\n"
+        changed = True
+
     if "lintVitalAnalyzeRelease" not in content:
         content = content.rstrip() + "\n\ntasks.configureEach {\n    if (name == \"lintVitalAnalyzeRelease\") {\n        enabled = false\n    }\n}\n"
         changed = True
 
     path.write_text(content)
-    print(f"Patched {path} (desugaring + release lint-task compatibility). changed={changed}")
+    print(f"Patched {path}. changed={changed}")
 
 
 def main() -> int:

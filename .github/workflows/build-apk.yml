@@ -6,12 +6,17 @@ on:
     branches: [main, master, 'fix/**']
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: tabdil-release-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
     name: Build app-release.apk
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -19,9 +24,12 @@ jobs:
           fetch-depth: 1
 
       - name: Verify Java 17
+        shell: bash
         run: |
+          set -euo pipefail
           java -version
-          test "$(java -version 2>&1 | sed -n 's/.*version \"\([0-9]*\).*/\1/p' | head -n1)" = "17"
+          JAVA_MAJOR="$(java -version 2>&1 | sed -n 's/.*version \"\([0-9]*\).*/\1/p' | head -n1)"
+          test "$JAVA_MAJOR" = "17"
 
       - name: Install Flutter 3.24.0 from official release storage
         shell: bash
@@ -30,97 +38,58 @@ jobs:
           FLUTTER_VERSION='3.24.0'
           ARCHIVE="flutter_linux_${FLUTTER_VERSION}-stable.tar.xz"
           URL="https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/${ARCHIVE}"
-          curl --fail --location --retry 5 --retry-delay 5 --retry-all-errors -o "/tmp/${ARCHIVE}" "$URL"
+          curl --fail --location --retry 6 --retry-delay 5 --retry-all-errors -o "/tmp/${ARCHIVE}" "$URL"
           rm -rf "$HOME/flutter"
           tar -xJf "/tmp/${ARCHIVE}" -C "$HOME"
           echo "$HOME/flutter/bin" >> "$GITHUB_PATH"
           echo "$HOME/flutter/bin/cache/dart-sdk/bin" >> "$GITHUB_PATH"
           "$HOME/flutter/bin/flutter" --version
+          "$HOME/flutter/bin/flutter" doctor -v
 
-      - name: Validate prepare script syntax
+      - name: Validate project preparation script
         run: bash -n scripts/prepare_flutter_project.sh
 
       - name: Prepare canonical Flutter source tree
         run: bash scripts/prepare_flutter_project.sh
 
-      - name: Prepare Android platform in repository root
+      - name: Generate Android platform with Flutter's own template
+        shell: bash
         run: |
+          set -euo pipefail
           if [ ! -d android ]; then
             flutter create --platforms=android --org com.tabdealtrader --project-name tabdil --no-pub .
           fi
-
-      - name: Align Android Gradle toolchain with current plugins
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          import re
-          settings = Path('android/settings.gradle')
-          s = settings.read_text()
-          replacements = {
-              r'(id\s+["\']com\.android\.application["\']\s+version\s+["\'])[^"\']+(["\'])': r'\g<1>8.8.2\2',
-              r'(id\s+["\']org\.jetbrains\.kotlin\.android["\']\s+version\s+["\'])[^"\']+(["\'])': r'\g<1>2.2.0\2',
-          }
-          for pattern, replacement in replacements.items():
-              s, count = re.subn(pattern, replacement, s, count=1)
-              if count != 1:
-                  raise SystemExit(f'Could not update Android plugin: {pattern}')
-          settings.write_text(s)
-          wrapper = Path('android/gradle/wrapper/gradle-wrapper.properties')
-          ws = wrapper.read_text()
-          ws = re.sub(r'distributionUrl=.*', 'distributionUrl=https\\://services.gradle.org/distributions/gradle-8.10.2-all.zip', ws)
-          wrapper.write_text(ws)
-          PY
-
-      - name: Force one Kotlin version for every Android plugin
-        run: |
-          cat > android/kotlin-toolchain.init.gradle <<'EOF'
-          allprojects { project ->
-            project.configurations.configureEach {
-              resolutionStrategy.eachDependency { details ->
-                if (details.requested.group == 'org.jetbrains.kotlin') {
-                  details.useVersion('2.2.0')
-                }
-              }
-            }
-          }
-          EOF
-          cat >> android/gradle.properties <<'EOF'
-          kotlin.code.style=official
-          kotlin.jvm.target.validation.mode=warning
-          EOF
-
-      - name: Verify Android Gradle toolchain
-        run: |
           test -f android/settings.gradle
           test -f android/app/build.gradle
           test -f android/gradle/wrapper/gradle-wrapper.properties
-          grep -q "dev.flutter.flutter-gradle-plugin" android/app/build.gradle
-          grep -q "org.jetbrains.kotlin.android.*2.2.0" android/settings.gradle
-          grep -q "com.android.application.*8.8.2" android/settings.gradle
-          grep -q "gradle-8.10.2-all.zip" android/gradle/wrapper/gradle-wrapper.properties
 
-      - name: Fix Android SDK and NDK versions
+      - name: Configure Android SDK without replacing Flutter's generated toolchain
+        shell: bash
         run: |
+          set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
           import re
-          p = Path('android/app/build.gradle')
-          s = p.read_text()
+
+          app = Path('android/app/build.gradle')
+          s = app.read_text()
           s = re.sub(r'compileSdk\s*=\s*[^\n]+', 'compileSdk = 35', s, count=1)
-          if 'ndkVersion' in s:
-              s = re.sub(r'ndkVersion\s*=\s*["\'][^"\']+["\']', 'ndkVersion = "27.0.12077973"', s, count=1)
-          else:
-              s = s.replace('android {', 'android {\n    ndkVersion = "27.0.12077973"', 1)
-          p.write_text(s)
+          s = re.sub(r'compileSdkVersion\s+\S+', 'compileSdkVersion 35', s, count=1)
+          app.write_text(s)
           PY
-          : > android/app/proguard-rules.pro
+
+      - name: Enable core library desugaring
+        run: python3 patch_android_desugaring.py
 
       - name: Fix generated Flutter smoke test
+        shell: bash
         run: |
+          set -euo pipefail
           mkdir -p test
           cat > test/widget_test.dart <<'EOF'
           import 'package:flutter_test/flutter_test.dart';
           import 'package:crypto_trader/main.dart';
+
           void main() {
             testWidgets('app smoke test', (tester) async {
               await tester.pumpWidget(const CryptoTraderApp());
@@ -129,36 +98,37 @@ jobs:
           }
           EOF
 
-      - name: Enable core library desugaring
-        run: python3 patch_android_desugaring.py
-
-      - name: Install dependencies
+      - name: Install Dart and Flutter dependencies
         run: flutter pub get
 
-      - name: Resolve pub cache path
-        id: pub-cache
+      - name: Resolve pub cache and wakelock_plus package
+        id: package-paths
         shell: bash
         run: |
           set -euo pipefail
           CACHE_DIR="$(dart pub cache path)"
           test -n "$CACHE_DIR"
-          echo "path=$CACHE_DIR" >> "$GITHUB_OUTPUT"
-          echo "PUB_CACHE resolved to: $CACHE_DIR"
+          WakelockGradle="$(find "$CACHE_DIR/hosted/pub.dev" -path '*/wakelock_plus-*/android/build.gradle' -type f -print -quit 2>/dev/null || true)"
+          echo "cache=$CACHE_DIR" >> "$GITHUB_OUTPUT"
+          echo "wakelock_gradle=$WakelockGradle" >> "$GITHUB_OUTPUT"
+          echo "Dart pub cache: $CACHE_DIR"
+          if [ -n "$WakelockGradle" ]; then echo "wakelock_plus Gradle: $WakelockGradle"; fi
 
-      - name: Patch wakelock_plus Gradle for Flutter 3.24
+      - name: Patch wakelock_plus Flutter Gradle properties if present
         env:
-          PUB_CACHE: ${{ steps.pub-cache.outputs.path }}
+          WakelockGradle: ${{ steps.package-paths.outputs.wakelock_gradle }}
+        shell: bash
         run: |
           set -euo pipefail
-          WakelockGradle="$PUB_CACHE/hosted/pub.dev/wakelock_plus-1.4.0/android/build.gradle"
-          if [ ! -f "$WakelockGradle" ]; then
-            echo "wakelock_plus 1.4.0 is not present; skipping package-specific patch."
+          if [ -z "$WakelockGradle" ] || [ ! -f "$WakelockGradle" ]; then
+            echo 'wakelock_plus Gradle file not found; no package patch required.'
             exit 0
           fi
           python3 - "$WakelockGradle" <<'PY'
           from pathlib import Path
           import re
           import sys
+
           p = Path(sys.argv[1])
           s = p.read_text()
           s = re.sub(r'flutter\.[A-Za-z0-9_]*compileSdk[A-Za-z0-9_]*', '35', s)
@@ -170,64 +140,63 @@ jobs:
           p.write_text(s)
           PY
 
-      - name: Verify wakelock_plus Gradle patch (diagnostic only)
+      - name: Verify generated Android and package files
+        shell: bash
         env:
-          PUB_CACHE: ${{ steps.pub-cache.outputs.path }}
+          WakelockGradle: ${{ steps.package-paths.outputs.wakelock_gradle }}
         run: |
-          WakelockGradle="$PUB_CACHE/hosted/pub.dev/wakelock_plus-1.4.0/android/build.gradle"
-          if [ -f "$WakelockGradle" ]; then
+          set -euo pipefail
+          test -f android/settings.gradle
+          test -f android/app/build.gradle
+          test -f android/gradle/wrapper/gradle-wrapper.properties
+          grep -q 'dev.flutter.flutter-gradle-plugin' android/app/build.gradle
+          if [ -n "$WakelockGradle" ] && [ -f "$WakelockGradle" ]; then
             if grep -Eq 'flutter\.[A-Za-z0-9_]+' "$WakelockGradle"; then
-              echo 'WARNING: wakelock_plus still contains a Flutter Gradle property reference.'
+              echo 'ERROR: unresolved Flutter Gradle property remains in wakelock_plus.'
               grep -nE 'flutter\.[A-Za-z0-9_]+' "$WakelockGradle" || true
-            else
-              echo 'wakelock_plus Flutter Gradle property references removed.'
+              exit 1
             fi
-          else
-            echo 'wakelock_plus 1.4.0 not installed; nothing to verify.'
           fi
 
       - name: Format Dart sources
-        run: dart format lib test
+        run: dart format --output=none lib test
 
       - name: Analyze Dart code
         run: flutter analyze --no-fatal-infos
 
-      - name: Run tests
+      - name: Run Flutter tests
         run: flutter test
 
-      - name: Build release APK
-        run: ./gradlew --init-script kotlin-toolchain.init.gradle :app:assembleRelease --stacktrace
+      - name: Verify Gradle configuration before release build
         working-directory: android
+        run: ./gradlew --version
+
+      - name: Build release APK
+        working-directory: android
+        run: ./gradlew :app:assembleRelease --stacktrace --no-daemon
 
       - name: Locate and normalize release APK
         shell: bash
         run: |
           set -euo pipefail
-          echo 'All APK files produced by Gradle:'
-          find . -type f -name '*.apk' -not -path './.git/*' -print
-          APK_SOURCE="$(find . -type f -name '*.apk' -not -path './.git/*' | head -n 1)"
+          APK_SOURCE="$(find android -type f -name '*.apk' -not -path '*/build/intermediates/*' -print -quit)"
           if [ -z "$APK_SOURCE" ]; then
-            echo 'ERROR: Gradle completed but no APK file was produced.' >&2
+            APK_SOURCE="$(find android -type f -name '*.apk' -print -quit)"
+          fi
+          if [ -z "$APK_SOURCE" ]; then
+            echo 'ERROR: Gradle finished without producing an APK.' >&2
+            find android -type f -name '*.apk' -print || true
             exit 1
           fi
           cp "$APK_SOURCE" app-release.apk
           test -s app-release.apk
-          echo "Normalized APK: app-release.apk"
+          sha256sum app-release.apk
           ls -lh app-release.apk
 
-      - name: Upload APK artifact
+      - name: Upload release APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: Tabdil-release-apk
           path: app-release.apk
           retention-days: 30
           if-no-files-found: error
-
-      - name: Create prerelease on main/master
-        if: github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master')
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: build-${{ github.run_number }}
-          name: Tabdil Auto Build #${{ github.run_number }}
-          files: app-release.apk
-          prerelease: true

@@ -4,7 +4,6 @@ import 'package:http/http.dart' as http;
 import '../models/candle.dart';
 import '../models/order_models.dart';
 
-/// Thrown when Tabdeal API returns a structured error {code, msg}.
 class TabdealApiException implements Exception {
   final int code;
   final String msg;
@@ -14,27 +13,12 @@ class TabdealApiException implements Exception {
   String toString() => 'TabdealApiException($code): $msg';
 }
 
-/// Client for the Tabdeal REST API.
+/// Tabdeal REST API client.
 ///
-/// Base URL and authentication scheme are taken from the official docs
-/// at https://docs.tabdeal.org/ (Persian):
-///   - Base URL: https://api1.tabdeal.org/r/api/v1
-///   - Public endpoints:  no auth required
-///   - USER endpoints:    header `X-MBX-APIKEY: <api_key>`
-///   - TRADE endpoints:   header `X-MBX-APIKEY` + `signature` query param,
-///                        where signature = HMAC_SHA256(queryString, api_secret)
-///                        and queryString MUST include a `timestamp` (ms).
-///
-/// IMPORTANT / KNOWN GAP: the public docs page did not expose a documented
-/// `klines` (candlestick history) endpoint at the time this client was written.
-/// A best-effort path (`/klines`) is included below following the same
-/// Binance-style convention used by every other endpoint in this API, but it
-/// has NOT been independently confirmed. Before relying on it, verify against
-/// the official Postman collection: https://github.com/Tabdeal-Exchange/tabdeal-api-postman
-/// If it 404s, candles must instead be reconstructed client-side from the
-/// `/trades` endpoint (see [TabdealApiService.fetchRecentTradesAsCandles]).
+/// The official Tabdeal Postman environment uses https://api.tabdeal.org as
+/// the domain and the documented REST routes are under /r/api/v1.
 class TabdealApiService {
-  static const String baseUrl = 'https://api1.tabdeal.org/r/api/v1';
+  static const String baseUrl = 'https://api.tabdeal.org/r/api/v1';
 
   final String? apiKey;
   final String? apiSecret;
@@ -43,131 +27,181 @@ class TabdealApiService {
   TabdealApiService({this.apiKey, this.apiSecret, http.Client? client})
       : _client = client ?? http.Client();
 
-  bool get hasCredentials => apiKey != null && apiSecret != null;
-
-  // ---------------------------------------------------------------------
-  // Signing helpers
-  // ---------------------------------------------------------------------
+  bool get hasCredentials =>
+      apiKey != null && apiKey!.isNotEmpty &&
+      apiSecret != null && apiSecret!.isNotEmpty;
 
   String _sign(String queryString) {
-    if (apiSecret == null) {
+    final secret = apiSecret;
+    if (secret == null || secret.isEmpty) {
       throw StateError('API secret not configured — cannot sign request.');
     }
-    final key = utf8.encode(apiSecret!);
-    final bytes = utf8.encode(queryString);
-    final hmac = Hmac(sha256, key);
-    return hmac.convert(bytes).toString();
+    return Hmac(sha256, utf8.encode(secret))
+        .convert(utf8.encode(queryString))
+        .toString();
   }
 
   Map<String, String> _authHeaders() {
-    if (apiKey == null) return {};
-    return {'X-MBX-APIKEY': apiKey!};
+    final key = apiKey;
+    if (key == null || key.isEmpty) return {};
+    return {'X-MBX-APIKEY': key};
   }
 
   String _buildSignedQuery(Map<String, dynamic> params) {
-    final withTimestamp = {
+    final values = <String, dynamic>{
       ...params,
       'timestamp': DateTime.now().millisecondsSinceEpoch,
     };
-    final query = withTimestamp.entries
+    final query = values.entries
         .map((e) => '${e.key}=${Uri.encodeQueryComponent(e.value.toString())}')
         .join('&');
-    final signature = _sign(query);
-    return '$query&signature=$signature';
+    return '$query&signature=${_sign(query)}';
   }
 
   Uri _publicUri(String path, [Map<String, dynamic>? params]) {
-    final query = (params ?? {})
-        .map((k, v) => MapEntry(k, v.toString()));
-    return Uri.parse('$baseUrl$path').replace(queryParameters: query.isEmpty ? null : query);
+    final query = <String, String>{};
+    for (final entry in (params ?? {}).entries) {
+      if (entry.value != null) query[entry.key] = entry.value.toString();
+    }
+    return Uri.parse('$baseUrl$path').replace(
+      queryParameters: query.isEmpty ? null : query,
+    );
   }
 
-  dynamic _handleResponse(http.Response resp) {
-    final decoded = jsonDecode(resp.body);
-    if (decoded is Map && decoded.containsKey('code') && decoded.containsKey('msg')) {
-      // Tabdeal error envelope, e.g. {"code": 1218, "msg": "..."}
-      throw TabdealApiException(decoded['code'] as int, decoded['msg'] as String);
+  dynamic _handleResponse(http.Response response) {
+    dynamic decoded;
+    try {
+      decoded = response.body.isEmpty ? <String, dynamic>{} : jsonDecode(response.body);
+    } catch (_) {
+      throw TabdealApiException(
+        response.statusCode,
+        'Invalid response from Tabdeal API (HTTP ${response.statusCode}).',
+      );
+    }
+
+    if (decoded is Map && decoded['code'] != null && decoded['msg'] != null) {
+      final rawCode = decoded['code'];
+      final code = rawCode is int ? rawCode : int.tryParse('$rawCode') ?? response.statusCode;
+      throw TabdealApiException(code, decoded['msg'].toString());
+    }
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw TabdealApiException(
+        response.statusCode,
+        decoded is Map && decoded['message'] != null
+            ? decoded['message'].toString()
+            : 'HTTP ${response.statusCode}',
+      );
     }
     return decoded;
   }
 
+  Future<http.Response> _get(Uri uri, {Map<String, String>? headers}) async {
+    return _client.get(uri, headers: headers);
+  }
+
   // ---------------------------------------------------------------------
-  // Public (unauthenticated) endpoints
+  // Public endpoints
   // ---------------------------------------------------------------------
 
-  /// GET /exchangeInfo — market rules, filters (min qty, tick size, etc).
-  Future<List<Map<String, dynamic>>> getExchangeInfo({String? symbol}) async {
-    final uri = _publicUri('/exchangeInfo', symbol != null ? {'symbol': symbol} : null);
-    final resp = await _client.get(uri);
-    final data = _handleResponse(resp);
-    if (data is List) return data.cast<Map<String, dynamic>>();
-    if (data is Map && data['symbols'] is List) {
-      return (data['symbols'] as List).cast<Map<String, dynamic>>();
+  Future<bool> ping() async {
+    final response = await _get(_publicUri('/ping'));
+    _handleResponse(response);
+    return response.statusCode >= 200 && response.statusCode < 300;
+  }
+
+  Future<int?> serverTime() async {
+    final response = await _get(_publicUri('/time'));
+    final data = _handleResponse(response);
+    if (data is Map && data['serverTime'] != null) {
+      return int.tryParse(data['serverTime'].toString());
     }
-    return [data as Map<String, dynamic>];
+    if (data is num) return data.toInt();
+    return null;
   }
 
-  /// GET /depth — order book snapshot.
+  Future<List<Map<String, dynamic>>> getExchangeInfo({String? symbol}) async {
+    final uri = _publicUri(
+      '/exchangeInfo',
+      symbol == null ? null : {'symbol': symbol},
+    );
+    final data = _handleResponse(await _get(uri));
+    if (data is List) return data.whereType<Map>().map(Map<String, dynamic>.from).toList();
+    if (data is Map && data['symbols'] is List) {
+      return (data['symbols'] as List)
+          .whereType<Map>()
+          .map(Map<String, dynamic>.from)
+          .toList();
+    }
+    if (data is Map) return [Map<String, dynamic>.from(data)];
+    return [];
+  }
+
   Future<Map<String, dynamic>> getDepth(String symbol, {int limit = 50}) async {
-    final uri = _publicUri('/depth', {'symbol': symbol, 'limit': limit});
-    final resp = await _client.get(uri);
-    return _handleResponse(resp) as Map<String, dynamic>;
+    final data = _handleResponse(
+      await _get(_publicUri('/depth', {'symbol': symbol, 'limit': limit})),
+    );
+    if (data is Map) return Map<String, dynamic>.from(data);
+    throw TabdealApiException(0, 'Unexpected order-book response.');
   }
 
-  /// GET /trades — most recent public trades for a symbol.
-  Future<List<Map<String, dynamic>>> getRecentTrades(String symbol, {int limit = 500}) async {
-    final uri = _publicUri('/trades', {'symbol': symbol, 'limit': limit});
-    final resp = await _client.get(uri);
-    final data = _handleResponse(resp);
-    return (data as List).cast<Map<String, dynamic>>();
+  Future<List<Map<String, dynamic>>> getRecentTrades(
+    String symbol, {
+    int limit = 500,
+  }) async {
+    final data = _handleResponse(
+      await _get(_publicUri('/trades', {'symbol': symbol, 'limit': limit})),
+    );
+    if (data is! List) {
+      throw TabdealApiException(0, 'Unexpected trades response.');
+    }
+    return data.whereType<Map>().map(Map<String, dynamic>.from).toList();
   }
 
-  /// Best-effort klines fetch. See class-level doc comment for caveats.
-  /// Falls back to bucketing recent trades into candles if the endpoint
-  /// is unavailable.
+  /// Fetches candlesticks when the endpoint is available, otherwise rebuilds
+  /// recent candles from the documented public /trades endpoint.
   Future<List<Candle>> getKlines(
     String symbol, {
     String interval = '15m',
     int limit = 200,
   }) async {
     try {
-      final uri = _publicUri('/klines', {
+      final response = await _get(_publicUri('/klines', {
         'symbol': symbol,
         'interval': interval,
         'limit': limit,
-      });
-      final resp = await _client.get(uri);
-      if (resp.statusCode == 200) {
-        final data = _handleResponse(resp);
+      }));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final data = _handleResponse(response);
         if (data is List) {
-          return data.map((e) => Candle.fromKlineArray(e as List)).toList();
+          return data
+              .whereType<List>()
+              .map(Candle.fromKlineArray)
+              .toList();
         }
       }
     } catch (_) {
-      // fall through to trade-bucketing fallback
+      // Tabdeal's public documentation has historically not exposed klines;
+      // use trades as the reliable fallback.
     }
-    return fetchRecentTradesAsCandles(symbol, bucketSeconds: _intervalToSeconds(interval));
+    return fetchRecentTradesAsCandles(
+      symbol,
+      bucketSeconds: _intervalToSeconds(interval),
+    );
   }
 
   int _intervalToSeconds(String interval) {
-    final unit = interval.substring(interval.length - 1);
+    if (interval.isEmpty) return 900;
+    final unit = interval.substring(interval.length - 1).toLowerCase();
     final value = int.tryParse(interval.substring(0, interval.length - 1)) ?? 1;
     switch (unit) {
-      case 'm':
-        return value * 60;
-      case 'h':
-        return value * 3600;
-      case 'd':
-        return value * 86400;
-      default:
-        return 900;
+      case 'm': return value * 60;
+      case 'h': return value * 3600;
+      case 'd': return value * 86400;
+      default: return 900;
     }
   }
 
-  /// Fallback candle builder: buckets raw trades into fixed-size time windows.
-  /// Less accurate than a true klines endpoint (limited by trade history
-  /// depth), but keeps the analysis engine functional without a confirmed
-  /// klines API.
   Future<List<Candle>> fetchRecentTradesAsCandles(
     String symbol, {
     int bucketSeconds = 900,
@@ -176,47 +210,55 @@ class TabdealApiService {
     if (trades.isEmpty) return [];
 
     final buckets = <int, List<Map<String, dynamic>>>{};
-    for (final t in trades) {
-      final timeMs = t['time'] as int;
-      final bucketKey = (timeMs ~/ 1000) ~/ bucketSeconds;
-      buckets.putIfAbsent(bucketKey, () => []).add(t);
+    for (final trade in trades) {
+      final rawTime = trade['time'] ?? trade['timestamp'];
+      final timeMs = rawTime is num
+          ? rawTime.toInt()
+          : int.tryParse('$rawTime') ?? 0;
+      if (timeMs <= 0) continue;
+      final bucket = (timeMs ~/ 1000) ~/ bucketSeconds;
+      buckets.putIfAbsent(bucket, () => <Map<String, dynamic>>[]).add(trade);
     }
 
-    final sortedKeys = buckets.keys.toList()..sort();
+    final keys = buckets.keys.toList()..sort();
     final candles = <Candle>[];
-    for (final key in sortedKeys) {
+    for (final key in keys) {
       final group = buckets[key]!;
-      final prices = group.map((t) => double.parse(t['price'].toString())).toList();
-      final volumes = group.map((t) => double.parse(t['qty'].toString())).toList();
+      final prices = group
+          .map((t) => double.tryParse('${t['price']}'))
+          .whereType<double>()
+          .toList();
+      if (prices.isEmpty) continue;
+      final volume = group
+          .map((t) => double.tryParse('${t['qty'] ?? t['quantity'] ?? 0}') ?? 0.0)
+          .fold<double>(0.0, (a, b) => a + b);
       candles.add(Candle(
         openTime: DateTime.fromMillisecondsSinceEpoch(key * bucketSeconds * 1000),
         open: prices.first,
         high: prices.reduce((a, b) => a > b ? a : b),
         low: prices.reduce((a, b) => a < b ? a : b),
         close: prices.last,
-        volume: volumes.fold(0.0, (a, b) => a + b),
+        volume: volume,
       ));
     }
     return candles;
   }
 
   // ---------------------------------------------------------------------
-  // Authenticated (USER) endpoints
+  // Authenticated endpoints
   // ---------------------------------------------------------------------
 
-  /// GET /account — balances and permissions. Requires api-key only (USER).
   Future<Map<String, dynamic>> getAccount() async {
     final query = _buildSignedQuery({});
-    final uri = Uri.parse('$baseUrl/account?$query');
-    final resp = await _client.get(uri, headers: _authHeaders());
-    return _handleResponse(resp) as Map<String, dynamic>;
+    final response = await _get(
+      Uri.parse('$baseUrl/account?$query'),
+      headers: _authHeaders(),
+    );
+    final data = _handleResponse(response);
+    if (data is Map) return Map<String, dynamic>.from(data);
+    throw TabdealApiException(0, 'Unexpected account response.');
   }
 
-  // ---------------------------------------------------------------------
-  // Authenticated (TRADE) endpoints — these move real funds.
-  // ---------------------------------------------------------------------
-
-  /// POST /order — place a new spot order (MARKET or LIMIT).
   Future<TabdealOrder> newOrder({
     required String symbol,
     required OrderSide side,
@@ -227,7 +269,9 @@ class TabdealApiService {
     String? newClientOrderId,
   }) async {
     final params = <String, dynamic>{
-      'symbol': symbol,
+      // Tabdeal's authenticated examples use tabdealSymbol (e.g. BTC_IRT).
+      // Preserve the caller's symbol when it is already in that form.
+      'tabdealSymbol': symbol.contains('_') ? symbol : symbol,
       'side': side == OrderSide.buy ? 'BUY' : 'SELL',
       'type': type == OrderType.market
           ? 'MARKET'
@@ -238,21 +282,19 @@ class TabdealApiService {
       if (newClientOrderId != null) 'newClientOrderId': newClientOrderId,
     };
     final query = _buildSignedQuery(params);
-    final uri = Uri.parse('$baseUrl/order');
-    final resp = await _client.post(
-      uri,
-      headers: {..._authHeaders(), 'Content-Type': 'application/x-www-form-urlencoded'},
+    final response = await _client.post(
+      Uri.parse('$baseUrl/order'),
+      headers: {
+        ..._authHeaders(),
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
       body: query,
     );
-    final data = _handleResponse(resp) as Map<String, dynamic>;
-    return TabdealOrder.fromJson(data);
+    final data = _handleResponse(response);
+    if (data is Map) return TabdealOrder.fromJson(Map<String, dynamic>.from(data));
+    throw TabdealApiException(0, 'Unexpected order response.');
   }
 
-  /// Places a market entry order, then attaches a protective stop-loss
-  /// (STOP_LOSS_LIMIT) order. Take-profits are managed client-side by the
-  /// app's position monitor (Tabdeal spot OCO covers only ONE stop + ONE
-  /// limit leg — not three take-profit levels — so TP1/TP2/TP3 partial
-  /// exits are orchestrated in Dart, not natively on the exchange).
   Future<TabdealOrder> openMarketPositionWithStop({
     required String symbol,
     required OrderSide side,
@@ -266,8 +308,6 @@ class TabdealApiService {
       type: OrderType.market,
       quantity: quantity,
     );
-
-    // Attach protective stop on the opposite side.
     final protectiveSide = side == OrderSide.buy ? OrderSide.sell : OrderSide.buy;
     await newOrder(
       symbol: symbol,
@@ -277,35 +317,57 @@ class TabdealApiService {
       price: stopLimitPrice,
       stopPrice: stopPrice,
     );
-
     return entry;
   }
 
-  /// DELETE /order — cancel an existing order.
-  Future<TabdealOrder> cancelOrder({required String symbol, required int orderId}) async {
-    final query = _buildSignedQuery({'symbol': symbol, 'orderId': orderId});
-    final uri = Uri.parse('$baseUrl/order?$query');
-    final resp = await _client.delete(uri, headers: _authHeaders());
-    final data = _handleResponse(resp) as Map<String, dynamic>;
-    return TabdealOrder.fromJson(data);
+  Future<TabdealOrder> cancelOrder({
+    required String symbol,
+    required int orderId,
+  }) async {
+    final query = _buildSignedQuery({
+      'tabdealSymbol': symbol,
+      'orderId': orderId,
+    });
+    final data = _handleResponse(
+      await _client.delete(
+        Uri.parse('$baseUrl/order?$query'),
+        headers: _authHeaders(),
+      ),
+    );
+    if (data is Map) return TabdealOrder.fromJson(Map<String, dynamic>.from(data));
+    throw TabdealApiException(0, 'Unexpected cancel-order response.');
   }
 
-  /// GET /openOrders
   Future<List<TabdealOrder>> getOpenOrders({String? symbol}) async {
-    final query = _buildSignedQuery(symbol != null ? {'symbol': symbol} : {});
-    final uri = Uri.parse('$baseUrl/openOrders?$query');
-    final resp = await _client.get(uri, headers: _authHeaders());
-    final data = _handleResponse(resp) as List;
-    return data.map((e) => TabdealOrder.fromJson(e as Map<String, dynamic>)).toList();
+    final query = _buildSignedQuery(
+      symbol == null ? {} : {'tabdealSymbol': symbol},
+    );
+    final data = _handleResponse(
+      await _get(
+        Uri.parse('$baseUrl/openOrders?$query'),
+        headers: _authHeaders(),
+      ),
+    );
+    if (data is! List) throw TabdealApiException(0, 'Unexpected open-orders response.');
+    return data
+        .whereType<Map>()
+        .map((e) => TabdealOrder.fromJson(Map<String, dynamic>.from(e)))
+        .toList();
   }
 
-  /// DELETE cancel-all open orders for a symbol.
   Future<List<TabdealOrder>> cancelAllOpenOrders(String symbol) async {
-    final query = _buildSignedQuery({'symbol': symbol});
-    final uri = Uri.parse('$baseUrl/openOrders?$query');
-    final resp = await _client.delete(uri, headers: _authHeaders());
-    final data = _handleResponse(resp) as List;
-    return data.map((e) => TabdealOrder.fromJson(e as Map<String, dynamic>)).toList();
+    final query = _buildSignedQuery({'tabdealSymbol': symbol});
+    final data = _handleResponse(
+      await _client.delete(
+        Uri.parse('$baseUrl/openOrders?$query'),
+        headers: _authHeaders(),
+      ),
+    );
+    if (data is! List) throw TabdealApiException(0, 'Unexpected cancel-all response.');
+    return data
+        .whereType<Map>()
+        .map((e) => TabdealOrder.fromJson(Map<String, dynamic>.from(e)))
+        .toList();
   }
 
   void dispose() => _client.close();

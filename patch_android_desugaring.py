@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
-"""Patch the generated Android app module for release-build compatibility."""
+"""Patch the generated Android app module for Flutter 3.24 compatibility."""
 import re
 import sys
 from pathlib import Path
 
-DESUGAR_VERSION = "2.1.4"
+# Flutter 3.24's generated Android/AGP stack is compatible with the 2.1.2
+# desugar library. Keep this version aligned instead of pulling newer
+# desugar metadata that can make D8 fail while merging release dex files.
+DESUGAR_VERSION = "2.1.2"
 GROOVY_PATH = Path("android/app/build.gradle")
 KOTLIN_PATH = Path("android/app/build.gradle.kts")
 
@@ -13,33 +16,36 @@ def patch_groovy(path: Path) -> None:
     content = path.read_text()
     changed = False
 
-    if "coreLibraryDesugaringEnabled" not in content:
+    content, n = re.subn(
+        r"coreLibraryDesugaring 'com\.android\.tools:desugar_jdk_libs:[^']+'",
+        f"coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:{DESUGAR_VERSION}'",
+        content,
+        count=1,
+    )
+    if n:
+        changed = True
+    elif "coreLibraryDesugaringEnabled" not in content:
         content, n = re.subn(r"(compileOptions\s*\{)", r"\1\n        coreLibraryDesugaringEnabled true", content, count=1)
         if n == 0:
             raise SystemExit("compileOptions block not found in build.gradle")
-        changed = True
-
-    if "desugar_jdk_libs" not in content:
         dep_line = f"    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:{DESUGAR_VERSION}'"
         content, n = re.subn(r"(\ndependencies\s*\{)", r"\1\n" + dep_line + "\n", content, count=1)
         if n == 0:
             content = content.rstrip() + f"\n\ndependencies {{\n{dep_line}\n}}\n"
         changed = True
 
-    # Explicitly keep the release variant unminified. Flutter's --no-shrink
-    # flag alone does not override every generated AGP configuration.
     if "minifyEnabled false" not in content:
         content = content.rstrip() + "\n\nandroid {\n    buildTypes {\n        release {\n            minifyEnabled false\n            shrinkResources false\n        }\n    }\n}\n"
         changed = True
 
-    # The runner's generated AGP/lint stack can fail in lintVitalAnalyzeRelease
-    # while processing its synthetic FakeDependency.jar. Disable only that task.
+    # Avoid the known generated lintVitalAnalyzeRelease/D8 path; Dart analyze
+    # and flutter test remain explicit CI gates.
     if "lintVitalAnalyzeRelease" not in content:
         content = content.rstrip() + "\n\ntasks.configureEach { task ->\n    if (task.name == 'lintVitalAnalyzeRelease') {\n        task.enabled = false\n    }\n}\n"
         changed = True
 
     path.write_text(content)
-    print(f"Patched {path}. changed={changed}")
+    print(f"Patched {path}; desugar_jdk_libs={DESUGAR_VERSION}; changed={changed}")
 
 
 def patch_kotlin(path: Path) -> None:
@@ -52,11 +58,17 @@ def patch_kotlin(path: Path) -> None:
             raise SystemExit("compileOptions block not found in build.gradle.kts")
         changed = True
 
-    if "desugar_jdk_libs" not in content:
+    content, n = re.subn(
+        r'coreLibraryDesugaring\("com\.android\.tools:desugar_jdk_libs:[^"]+"\)',
+        f'coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:{DESUGAR_VERSION}")',
+        content,
+        count=1,
+    )
+    if n:
+        changed = True
+    elif "desugar_jdk_libs" not in content:
         dep_line = f'    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:{DESUGAR_VERSION}")'
-        content, n = re.subn(r"(\ndependencies\s*\{)", r"\1\n" + dep_line + "\n", content, count=1)
-        if n == 0:
-            content = content.rstrip() + f"\n\ndependencies {{\n{dep_line}\n}}\n"
+        content = content.rstrip() + f"\n\ndependencies {{\n{dep_line}\n}}\n"
         changed = True
 
     if "isMinifyEnabled = false" not in content:
@@ -68,7 +80,7 @@ def patch_kotlin(path: Path) -> None:
         changed = True
 
     path.write_text(content)
-    print(f"Patched {path}. changed={changed}")
+    print(f"Patched {path}; desugar_jdk_libs={DESUGAR_VERSION}; changed={changed}")
 
 
 def main() -> int:

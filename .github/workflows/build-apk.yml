@@ -15,9 +15,11 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
       - name: Set up Java
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v4
         with:
           distribution: zulu
           java-version: '17'
@@ -29,43 +31,41 @@ jobs:
           flutter-version: '3.24.0'
           cache: true
 
-      - name: Validate prepare script
+      - name: Validate prepare script syntax
         run: bash -n scripts/prepare_flutter_project.sh
 
-      - name: Prepare Flutter source tree
+      - name: Prepare canonical Flutter source tree
         run: bash scripts/prepare_flutter_project.sh
 
-      - name: Prepare Android platform
+      - name: Prepare Android platform in repository root
         run: |
           if [ ! -d android ]; then
             flutter create --platforms=android --org com.tabdealtrader --project-name tabdil --no-pub .
           fi
 
-      - name: Align Android toolchain
+      - name: Align Android Gradle toolchain with current plugins
         run: |
           python3 - <<'PY'
           from pathlib import Path
           import re
           settings = Path('android/settings.gradle')
           s = settings.read_text()
-          s = re.sub(r'(id\s+["\']com\.android\.application["\']\s+version\s+["\'])[^"\']+(["\'])', r'\g<1>8.8.2\2', s, count=1)
-          s = re.sub(r'(id\s+["\']org\.jetbrains\.kotlin\.android["\']\s+version\s+["\'])[^"\']+(["\'])', r'\g<1>2.2.0\2', s, count=1)
+          replacements = {
+              r'(id\s+["\']com\.android\.application["\']\s+version\s+["\'])[^"\']+(["\'])': r'\g<1>8.8.2\2',
+              r'(id\s+["\']org\.jetbrains\.kotlin\.android["\']\s+version\s+["\'])[^"\']+(["\'])': r'\g<1>2.2.0\2',
+          }
+          for pattern, replacement in replacements.items():
+              s, count = re.subn(pattern, replacement, s, count=1)
+              if count != 1:
+                  raise SystemExit(f'Could not update Android plugin: {pattern}')
           settings.write_text(s)
           wrapper = Path('android/gradle/wrapper/gradle-wrapper.properties')
           ws = wrapper.read_text()
           ws = re.sub(r'distributionUrl=.*', 'distributionUrl=https\\://services.gradle.org/distributions/gradle-8.10.2-all.zip', ws)
           wrapper.write_text(ws)
-          app = Path('android/app/build.gradle')
-          a = app.read_text()
-          a = re.sub(r'compileSdk\s*=\s*flutter\.compileSdkVersion', 'compileSdk = 35', a)
-          if 'ndkVersion' not in a:
-              a = a.replace('compileSdk = 35', 'compileSdk = 35\n    ndkVersion = "27.0.12077973"', 1)
-          else:
-              a = re.sub(r'ndkVersion\s*=\s*[^\n]+', 'ndkVersion = "27.0.12077973"', a, count=1)
-          app.write_text(a)
           PY
 
-      - name: Force Kotlin version
+      - name: Force one Kotlin version for every Android plugin
         run: |
           cat > android/kotlin-toolchain.init.gradle <<'EOF'
           allprojects { project ->
@@ -78,7 +78,50 @@ jobs:
             }
           }
           EOF
-          printf '\nkotlin.code.style=official\nkotlin.jvm.target.validation.mode=warning\n' >> android/gradle.properties
+          cat >> android/gradle.properties <<'EOF'
+          kotlin.code.style=official
+          kotlin.jvm.target.validation.mode=warning
+          EOF
+
+      - name: Verify Android Gradle toolchain
+        run: |
+          test -f android/settings.gradle
+          test -f android/app/build.gradle
+          test -f android/gradle/wrapper/gradle-wrapper.properties
+          grep -q "dev.flutter.flutter-gradle-plugin" android/app/build.gradle
+          grep -q "org.jetbrains.kotlin.android.*2.2.0" android/settings.gradle
+          grep -q "com.android.application.*8.8.2" android/settings.gradle
+          grep -q "gradle-8.10.2-all.zip" android/gradle/wrapper/gradle-wrapper.properties
+
+      - name: Fix Android SDK and NDK versions
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          p = Path('android/app/build.gradle')
+          s = p.read_text()
+          s = re.sub(r'compileSdk\s*=\s*[^\n]+', 'compileSdk = 35', s, count=1)
+          if 'ndkVersion' in s:
+              s = re.sub(r'ndkVersion\s*=\s*["\'][^"\']+["\']', 'ndkVersion = "27.0.12077973"', s, count=1)
+          else:
+              s = s.replace('android {', 'android {\n    ndkVersion = "27.0.12077973"', 1)
+          p.write_text(s)
+          PY
+          : > android/app/proguard-rules.pro
+
+      - name: Fix generated Flutter smoke test
+        run: |
+          mkdir -p test
+          cat > test/widget_test.dart <<'EOF'
+          import 'package:flutter_test/flutter_test.dart';
+          import 'package:crypto_trader/main.dart';
+          void main() {
+            testWidgets('app smoke test', (tester) async {
+              await tester.pumpWidget(const CryptoTraderApp());
+              expect(find.byType(CryptoTraderApp), findsOneWidget);
+            });
+          }
+          EOF
 
       - name: Enable core library desugaring
         run: python3 patch_android_desugaring.py
@@ -86,54 +129,68 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
-      - name: Patch wakelock_plus Gradle
+      - name: Patch wakelock_plus Gradle for Flutter 3.24
         run: |
-          W="$PUB_CACHE/hosted/pub.dev/wakelock_plus-1.4.0/android/build.gradle"
-          if [ -f "$W" ]; then
-            sed -i 's/flutter\.compileSdkVersion/35/g; s/flutter\.minSdkVersion/21/g; s/flutter\.targetSdkVersion/35/g' "$W"
+          WakelockGradle="$PUB_CACHE/hosted/pub.dev/wakelock_plus-1.4.0/android/build.gradle"
+          if [ -f "$WakelockGradle" ]; then
+            python3 - "$WakelockGradle" <<'PY'
+          from pathlib import Path
+          import re
+          import sys
+          p = Path(sys.argv[1])
+          s = p.read_text()
+          for pattern, value in {
+              r'flutter\.compileSdkVersion': '35',
+              r'flutter\.minSdkVersion': '21',
+              r'flutter\.targetSdkVersion': '35',
+          }.items():
+              s = re.sub(pattern, value, s)
+          p.write_text(s)
+          PY
           fi
 
-      - name: Format and analyze
-        run: |
-          dart format lib test
-          flutter analyze --no-fatal-infos
+      - name: Format Dart sources
+        run: dart format lib test
+
+      - name: Analyze Dart code
+        run: flutter analyze --no-fatal-infos
 
       - name: Run tests
         run: flutter test
 
       - name: Build release APK
-        working-directory: android
         run: ./gradlew --init-script kotlin-toolchain.init.gradle :app:assembleRelease --stacktrace
+        working-directory: android
 
       - name: Locate and normalize release APK
         shell: bash
         run: |
           set -euo pipefail
-          echo 'APK files produced:'
-          find . -type f -name '*.apk' -print
-          APK_SOURCE="$(find android/app/build android/build . -type f -name '*.apk' 2>/dev/null | head -n 1)"
+          echo 'All APK files produced by Gradle:'
+          find . -type f -name '*.apk' -not -path './.git/*' -print
+          APK_SOURCE="$(find . -type f -name '*.apk' -not -path './.git/*' | head -n 1)"
           if [ -z "$APK_SOURCE" ]; then
-            echo 'ERROR: Gradle completed but no APK was found.' >&2
+            echo 'ERROR: Gradle completed but no APK file was produced.' >&2
             exit 1
           fi
-          mkdir -p dist
-          cp "$APK_SOURCE" dist/Tabdil-release.apk
-          test -s dist/Tabdil-release.apk
-          ls -lh dist/Tabdil-release.apk
+          cp "$APK_SOURCE" app-release.apk
+          test -s app-release.apk
+          echo "Normalized APK: app-release.apk"
+          ls -lh app-release.apk
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: Tabdil-release-apk
-          path: dist/Tabdil-release.apk
+          path: app-release.apk
           retention-days: 30
           if-no-files-found: error
 
-      - name: Create prerelease
+      - name: Create prerelease on main/master
         if: github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master')
         uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ github.run_number }}
-          name: Tabdil build #${{ github.run_number }}
-          files: dist/Tabdil-release.apk
+          name: Tabdil Auto Build #${{ github.run_number }}
+          files: app-release.apk
           prerelease: true

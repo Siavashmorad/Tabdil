@@ -143,6 +143,25 @@ jobs:
           p.write_text(s)
           PY
 
+      - name: Normalize smoke test
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p test
+          cat > test/widget_test.dart <<'EOF'
+          import 'package:flutter_test/flutter_test.dart';
+          import 'package:crypto_trader/main.dart';
+
+          void main() {
+            testWidgets('Tabdil app smoke test', (tester) async {
+              await tester.pumpWidget(const CryptoTraderApp());
+              expect(find.byType(CryptoTraderApp), findsOneWidget);
+            });
+          }
+          EOF
+          grep -q "package:crypto_trader/main.dart" test/widget_test.dart
+          grep -q "CryptoTraderApp" test/widget_test.dart
+
       - name: Verify toolchain before Gradle
         shell: bash
         run: |

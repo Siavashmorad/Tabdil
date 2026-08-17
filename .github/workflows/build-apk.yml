@@ -58,8 +58,8 @@ jobs:
           import re
           p = Path('android/settings.gradle')
           s = p.read_text()
-          pattern = r"(id ['\"]org\\.jetbrains\\.kotlin\\.android['\"] version ['\"])[^'\"]+(['\"])"
-          updated, count = re.subn(pattern, r"\\g<1>1.9.24\\g<2>", s)
+          pattern = r"(id ['\"]org\.jetbrains\.kotlin\.android['\"] version ['\"])[^'\"]+(['\"])"
+          updated, count = re.subn(pattern, r"\g<1>1.9.24\g<2>", s)
           if count != 1:
               raise SystemExit(f'Expected exactly one Kotlin Android plugin declaration, found {count}')
           p.write_text(updated)

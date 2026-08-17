@@ -78,11 +78,11 @@ jobs:
           s = settings.read_text()
           s = re.sub(r'(id\s+["\']com\.android\.application["\']\s+version\s+)["\'][^"\']+["\']', r'\g<1>"8.7.3"', s)
           s = re.sub(r'(id\s+["\']org\.jetbrains\.kotlin\.android["\']\s+version\s+)["\'][^"\']+["\']', r'\g<1>"2.2.0"', s)
-          if 'com.android.application' not in s:
-              raise SystemExit('Android Gradle plugin declaration not found')
-          if 'org.jetbrains.kotlin.android' not in s:
-              raise SystemExit('Kotlin Android plugin declaration not found')
           settings.write_text(s)
+          if 'id("com.android.application") version "8.7.3"' not in s and "id('com.android.application') version '8.7.3'" not in s:
+              raise SystemExit('AGP 8.7.3 was not applied to android/settings.gradle')
+          if 'id("org.jetbrains.kotlin.android") version "2.2.0"' not in s and "id('org.jetbrains.kotlin.android') version '2.2.0'" not in s:
+              raise SystemExit('Kotlin 2.2.0 was not applied to android/settings.gradle')
 
           wrapper = Path('android/gradle/wrapper/gradle-wrapper.properties')
           w = wrapper.read_text()
@@ -194,6 +194,8 @@ jobs:
           grep -q 'dev.flutter.flutter-gradle-plugin' android/app/build.gradle
           grep -q 'android.permission.INTERNET' android/app/src/main/AndroidManifest.xml
           grep -q 'android.permission.ACCESS_NETWORK_STATE' android/app/src/main/AndroidManifest.xml
+          grep -Eq 'com.android.application.*8\.7\.3' android/settings.gradle
+          grep -Eq 'org.jetbrains.kotlin.android.*2\.2\.0' android/settings.gradle
           ! grep -Eq 'flutter\.[A-Za-z0-9_]+' "$WakelockGradle"
           grep -Eq 'compileSdkVersion[[:space:]]+35|compileSdk[[:space:]]*=[[:space:]]*35' "$WakelockGradle"
 

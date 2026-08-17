@@ -179,19 +179,28 @@ jobs:
         working-directory: android
         run: ./gradlew :app:assembleRelease --stacktrace --no-daemon
 
-      - name: Locate APK output anywhere in workspace
+      - name: Locate APK output from absolute workspace
         id: apk
         shell: bash
         run: |
           set -euo pipefail
-          echo 'Workspace APK/AAB files:'
-          find . -type f \( -name '*.apk' -o -name '*.aab' \) -print
-          APK="$(find . -type f -name '*.apk' -path '*/outputs/*' -print -quit)"
+          echo "GITHUB_WORKSPACE=$GITHUB_WORKSPACE"
+          echo "Current directory=$(pwd)"
+          echo "Expected Gradle output tree:"
+          find "$GITHUB_WORKSPACE/android/app/build" -maxdepth 8 -type f -print 2>/dev/null || true
+          echo "All APK files under workspace:"
+          find "$GITHUB_WORKSPACE" -type f -name '*.apk' -print 2>/dev/null || true
+          APK="$(find "$GITHUB_WORKSPACE" -type f -name '*.apk' -print -quit 2>/dev/null || true)"
           if [ -z "$APK" ]; then
-            APK="$(find . -type f -name '*.apk' -print -quit)"
+            echo "No APK under workspace; searching runner work directory..."
+            APK="$(find "$GITHUB_WORKSPACE/.." -type f -name '*.apk' -print -quit 2>/dev/null || true)"
           fi
-          test -n "$APK"
-          echo "Found APK: $APK"
+          if [ -z "$APK" ]; then
+            echo "ERROR: Gradle reported success but no APK file was found. Listing build directories:"
+            find "$GITHUB_WORKSPACE" -type d -name build -print 2>/dev/null || true
+            exit 1
+          fi
+          echo "FOUND_APK=$APK"
           echo "path=$APK" >> "$GITHUB_OUTPUT"
 
       - name: Verify and stage APK
@@ -200,18 +209,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cp "$APK_PATH" app-release.apk
-          test -s app-release.apk
-          echo 'APK SHA-256:'
-          sha256sum app-release.apk
-          echo 'APK size:'
-          ls -lh app-release.apk
-          file app-release.apk
+          test -f "$APK_PATH"
+          cp "$APK_PATH" "$GITHUB_WORKSPACE/app-release.apk"
+          test -s "$GITHUB_WORKSPACE/app-release.apk"
+          sha256sum "$GITHUB_WORKSPACE/app-release.apk"
+          ls -lh "$GITHUB_WORKSPACE/app-release.apk"
+          file "$GITHUB_WORKSPACE/app-release.apk"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: Tabdil-release-apk
-          path: app-release.apk
+          path: ${{ github.workspace }}/app-release.apk
           retention-days: 30
           if-no-files-found: error

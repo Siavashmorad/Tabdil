@@ -2,7 +2,7 @@
 set -euo pipefail
 
 rm -rf lib
-mkdir -p lib/core/{api,analysis,models,risk,widgets} lib/services lib/screens/{dashboard,trading,portfolio,settings,analysis}
+mkdir -p lib/core/{api,analysis,models,risk,widgets,scanner} lib/services lib/screens/{dashboard,trading,portfolio,settings,analysis}
 
 cp main.dart lib/main.dart
 cp trading_controller.dart lib/services/trading_controller.dart
@@ -17,6 +17,7 @@ cp trade_signal.dart lib/core/models/trade_signal.dart
 cp order_models.dart lib/core/models/order_models.dart
 cp risk_manager.dart lib/core/risk/risk_manager.dart
 cp candlestick_chart.dart lib/core/widgets/candlestick_chart.dart
+cp live_signal_scanner.dart lib/core/scanner/live_signal_scanner.dart
 cp dashboard_screen.dart lib/screens/dashboard/dashboard_screen.dart
 cp trading_screen.dart lib/screens/trading/trading_screen.dart
 cp portfolio_screen.dart lib/screens/portfolio/portfolio_screen.dart
@@ -43,6 +44,7 @@ CANONICAL = {
     'order_models.dart': 'core/models/order_models.dart',
     'risk_manager.dart': 'core/risk/risk_manager.dart',
     'candlestick_chart.dart': 'core/widgets/candlestick_chart.dart',
+    'live_signal_scanner.dart': 'core/scanner/live_signal_scanner.dart',
     'dashboard_screen.dart': 'screens/dashboard/dashboard_screen.dart',
     'trading_screen.dart': 'screens/trading/trading_screen.dart',
     'portfolio_screen.dart': 'screens/portfolio/portfolio_screen.dart',
@@ -68,8 +70,7 @@ for path in root.rglob('*.dart'):
             return m.group(0)
         changed += 1
         return f"{m.group('prefix')}{m.group('quote')}package:{PACKAGE}/{destination}{m.group('quote')}{m.group('suffix')}"
-    rewritten = directive.sub(repl, text)
-    path.write_text(rewritten, encoding='utf-8')
+    path.write_text(directive.sub(repl, text), encoding='utf-8')
 
 main = root / 'main.dart'
 main_text = main.read_text(encoding='utf-8')
@@ -96,8 +97,5 @@ if missing:
 print(f'Canonical Flutter source tree prepared; normalized {changed} local Dart import(s).')
 PY
 
-# Root Dart files are staging inputs. Remove them from the package workspace
-# so flutter analyze does not analyze duplicate legacy sources.
 find . -maxdepth 1 -type f -name '*.dart' -delete
-
 echo 'Flutter source tree prepared successfully; legacy root Dart sources removed from analysis.'

@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'core/api/tabdeal_api_service.dart';
 import 'core/scanner/live_signal_scanner.dart';
 
 void main() => runApp(const TabdilApp());
@@ -28,10 +27,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
   String? _error;
 
   @override
-  void initState() {
-    super.initState();
-    _scanner = LiveSignalScanner();
-  }
+  void initState() { super.initState(); _scanner = LiveSignalScanner(); }
 
   Future<void> _scan() async {
     setState(() { _loading = true; _error = null; });
@@ -39,8 +35,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
       await _scanner.api.ping();
       final result = await _scanner.scanBest(maxMarkets: 30);
       if (!mounted) return;
-      setState(() => _signal = result);
-      if (result == null) _error = 'فعلاً فرصت باکیفیت با داده‌های دریافتی پیدا نشد.';
+      setState(() { _signal = result; if (result == null) _error = 'فعلاً فرصت باکیفیت با داده‌های دریافتی پیدا نشد.'; });
     } catch (e) {
       if (mounted) setState(() => _error = 'اتصال/دریافت داده ناموفق بود: $e');
     } finally {
@@ -49,11 +44,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
   }
 
   String _p(double value) => value >= 1000 ? value.toStringAsFixed(2) : value >= 1 ? value.toStringAsFixed(5) : value.toStringAsFixed(8);
-
-  Widget _row(String title, String value) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 7),
-        child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text(title), Text(value, style: const TextStyle(fontWeight: FontWeight.bold))]),
-      );
+  Widget _row(String title, String value) => Padding(padding: const EdgeInsets.symmetric(vertical: 7), child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text(title), Text(value, style: const TextStyle(fontWeight: FontWeight.bold))]));
 
   @override
   Widget build(BuildContext context) {
@@ -94,6 +85,3 @@ class _ScannerScreenState extends State<ScannerScreen> {
   @override
   void dispose() { _scanner.dispose(); super.dispose(); }
 }
-
-// Keep this import referenced so the API client remains part of the app's public architecture.
-final TabdealApiService _apiTypeAnchor = TabdealApiService();

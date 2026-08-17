@@ -26,14 +26,15 @@ def patch_groovy(path: Path) -> None:
             content = content.rstrip() + f"\n\ndependencies {{\n{dep_line}\n}}\n"
         changed = True
 
-    # Avoid the runner's broken lintVitalAnalyzeRelease/D8 path for the
-    # generated app. Dart analyze and the test suite remain CI gates.
-    if "checkReleaseBuilds = false" not in content:
-        content = content.rstrip() + "\nlint {\n    checkReleaseBuilds = false\n}\n"
+    # The generated Flutter/AGP stack on the runner has a broken
+    # lintVitalAnalyzeRelease -> D8 FakeDependency.jar path. Disable only that
+    # task; Dart analyze and flutter test remain explicit CI gates.
+    if "lintVitalAnalyzeRelease" not in content:
+        content = content.rstrip() + "\n\ntasks.configureEach { task ->\n    if (task.name == 'lintVitalAnalyzeRelease') {\n        task.enabled = false\n    }\n}\n"
         changed = True
 
     path.write_text(content)
-    print(f"Patched {path} (desugaring + release lint compatibility). changed={changed}")
+    print(f"Patched {path} (desugaring + release lint-task compatibility). changed={changed}")
 
 
 def patch_kotlin(path: Path) -> None:
@@ -53,12 +54,12 @@ def patch_kotlin(path: Path) -> None:
             content = content.rstrip() + f"\n\ndependencies {{\n{dep_line}\n}}\n"
         changed = True
 
-    if "checkReleaseBuilds = false" not in content:
-        content = content.rstrip() + "\nlint {\n    checkReleaseBuilds = false\n}\n"
+    if "lintVitalAnalyzeRelease" not in content:
+        content = content.rstrip() + "\n\ntasks.configureEach {\n    if (name == \"lintVitalAnalyzeRelease\") {\n        enabled = false\n    }\n}\n"
         changed = True
 
     path.write_text(content)
-    print(f"Patched {path} (desugaring + release lint compatibility). changed={changed}")
+    print(f"Patched {path} (desugaring + release lint-task compatibility). changed={changed}")
 
 
 def main() -> int:

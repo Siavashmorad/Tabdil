@@ -35,12 +35,14 @@ jobs:
           set -euo pipefail
           V=3.24.0
           A="flutter_linux_${V}-stable.tar.xz"
+          FLUTTER_HOME="$HOME/flutter"
           curl --fail --location --retry 6 --retry-delay 5 --retry-all-errors -o "/tmp/$A" "https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/$A"
-          rm -rf "$HOME/flutter"
+          rm -rf "$FLUTTER_HOME"
           tar -xJf "/tmp/$A" -C "$HOME"
-          echo "$HOME/flutter/bin" >> "$GITHUB_PATH"
-          echo "$HOME/flutter/bin/cache/dart-sdk/bin" >> "$GITHUB_PATH"
-          flutter --version
+          test -x "$FLUTTER_HOME/bin/flutter"
+          echo "$FLUTTER_HOME/bin" >> "$GITHUB_PATH"
+          echo "$FLUTTER_HOME/bin/cache/dart-sdk/bin" >> "$GITHUB_PATH"
+          "$FLUTTER_HOME/bin/flutter" --version
 
       - name: Prepare Flutter project
         run: bash scripts/prepare_flutter_project.sh
@@ -60,10 +62,8 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           import re
-
           p = Path('android/settings.gradle')
           s = p.read_text()
-
           def normalize(text, plugin, version):
               patterns = [
                   rf"(id\s*\(\s*['\"]{re.escape(plugin)}['\"]\s*\)\s*version\s*['\"])[^'\"]+(['\"])",
@@ -71,21 +71,15 @@ jobs:
               ]
               for pat in patterns:
                   text, n = re.subn(pat, rf"\g<1>{version}\g<2>", text)
-                  if n:
-                      return text
+                  if n: return text
               return text
-
           s = normalize(s, 'com.android.application', '8.7.3')
           s = normalize(s, 'org.jetbrains.kotlin.android', '2.2.0')
-
           agp = re.search(r"com\.android\.application['\"]?\s*\)?\s*version\s*['\"]([^'\"]+)", s)
           kotlin = re.search(r"org\.jetbrains\.kotlin\.android['\"]?\s*\)?\s*version\s*['\"]([^'\"]+)", s)
-          if not agp or agp.group(1) != '8.7.3':
-              raise SystemExit(f'Unable to normalize AGP. Detected: {agp.group(1) if agp else "none"}')
-          if not kotlin or kotlin.group(1) != '2.2.0':
-              raise SystemExit(f'Unable to normalize Kotlin. Detected: {kotlin.group(1) if kotlin else "none"}')
+          if not agp or agp.group(1) != '8.7.3': raise SystemExit(f'Unable to normalize AGP: {agp.group(1) if agp else "none"}')
+          if not kotlin or kotlin.group(1) != '2.2.0': raise SystemExit(f'Unable to normalize Kotlin: {kotlin.group(1) if kotlin else "none"}')
           p.write_text(s)
-
           w = Path('android/gradle/wrapper/gradle-wrapper.properties')
           ws = w.read_text()
           ws = re.sub(r'^distributionUrl=.*$', 'distributionUrl=https\\://services.gradle.org/distributions/gradle-8.10.2-bin.zip', ws, flags=re.M)
@@ -104,8 +98,7 @@ jobs:
           import sys
           p=Path(sys.argv[1]); s=p.read_text()
           for n in ('android.permission.INTERNET','android.permission.ACCESS_NETWORK_STATE'):
-              if n not in s:
-                  s=s.replace('<application', f'    <uses-permission android:name="{n}" />\n    <application', 1)
+              if n not in s: s=s.replace('<application', f'    <uses-permission android:name="{n}" />\n    <application', 1)
           p.write_text(s)
           PY
           grep -q 'android.permission.INTERNET' "$M"

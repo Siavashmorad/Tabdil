@@ -26,11 +26,10 @@ def patch_groovy(path: Path) -> None:
             content = content.rstrip() + f"\n\ndependencies {{\n{dep_line}\n}}\n"
         changed = True
 
-    # The runner's Android lint/R8 combination can fail in lintVitalAnalyzeRelease
-    # while processing its synthetic FakeDependency.jar. Dart analyze and tests
-    # remain explicit CI gates, so disable only this broken release lint task.
-    if "checkReleaseBuilds false" not in content:
-        content = content.rstrip() + "\nlint {\n    checkReleaseBuilds false\n}\n"
+    # Avoid the runner's broken lintVitalAnalyzeRelease/D8 path for the
+    # generated app. Dart analyze and the test suite remain CI gates.
+    if "checkReleaseBuilds = false" not in content:
+        content = content.rstrip() + "\nlint {\n    checkReleaseBuilds = false\n}\n"
         changed = True
 
     path.write_text(content)

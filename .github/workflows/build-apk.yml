@@ -62,28 +62,19 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           import re
-          p = Path('android/settings.gradle')
-          s = p.read_text()
+          p=Path('android/settings.gradle'); s=p.read_text()
           def normalize(text, plugin, version):
-              patterns = [
-                  rf"(id\s*\(\s*['\"]{re.escape(plugin)}['\"]\s*\)\s*version\s*['\"])[^'\"]+(['\"])",
-                  rf"(id\s+['\"]{re.escape(plugin)}['\"]\s+version\s+['\"])[^'\"]+(['\"])",
-              ]
+              patterns=[rf"(id\s*\(\s*['\"]{re.escape(plugin)}['\"]\s*\)\s*version\s*['\"])[^'\"]+(['\"])",rf"(id\s+['\"]{re.escape(plugin)}['\"]\s+version\s+['\"])[^'\"]+(['\"])"]
               for pat in patterns:
-                  text, n = re.subn(pat, rf"\g<1>{version}\g<2>", text)
-                  if n: return text
+                  text,n=re.subn(pat,rf"\g<1>{version}\g<2>",text)
+                  if n:return text
               return text
-          s = normalize(s, 'com.android.application', '8.7.3')
-          s = normalize(s, 'org.jetbrains.kotlin.android', '2.2.0')
-          agp = re.search(r"com\.android\.application['\"]?\s*\)?\s*version\s*['\"]([^'\"]+)", s)
-          kotlin = re.search(r"org\.jetbrains\.kotlin\.android['\"]?\s*\)?\s*version\s*['\"]([^'\"]+)", s)
-          if not agp or agp.group(1) != '8.7.3': raise SystemExit(f'Unable to normalize AGP: {agp.group(1) if agp else "none"}')
-          if not kotlin or kotlin.group(1) != '2.2.0': raise SystemExit(f'Unable to normalize Kotlin: {kotlin.group(1) if kotlin else "none"}')
+          s=normalize(s,'com.android.application','8.7.3'); s=normalize(s,'org.jetbrains.kotlin.android','2.2.0')
+          agp=re.search(r"com\.android\.application['\"]?\s*\)?\s*version\s*['\"]([^'\"]+)",s); kotlin=re.search(r"org\.jetbrains\.kotlin\.android['\"]?\s*\)?\s*version\s*['\"]([^'\"]+)",s)
+          if not agp or agp.group(1)!='8.7.3': raise SystemExit(f'Unable to normalize AGP: {agp.group(1) if agp else "none"}')
+          if not kotlin or kotlin.group(1)!='2.2.0': raise SystemExit(f'Unable to normalize Kotlin: {kotlin.group(1) if kotlin else "none"}')
           p.write_text(s)
-          w = Path('android/gradle/wrapper/gradle-wrapper.properties')
-          ws = w.read_text()
-          ws = re.sub(r'^distributionUrl=.*$', 'distributionUrl=https\\://services.gradle.org/distributions/gradle-8.10.2-bin.zip', ws, flags=re.M)
-          w.write_text(ws)
+          w=Path('android/gradle/wrapper/gradle-wrapper.properties'); ws=w.read_text(); ws=re.sub(r'^distributionUrl=.*$','distributionUrl=https\\://services.gradle.org/distributions/gradle-8.10.2-bin.zip',ws,flags=re.M); w.write_text(ws)
           PY
 
       - name: Ensure network permissions
@@ -96,7 +87,7 @@ jobs:
           import sys
           p=Path(sys.argv[1]); s=p.read_text()
           for n in ('android.permission.INTERNET','android.permission.ACCESS_NETWORK_STATE'):
-              if n not in s: s=s.replace('<application', f'    <uses-permission android:name="{n}" />\n    <application', 1)
+              if n not in s:s=s.replace('<application',f'    <uses-permission android:name="{n}" />\n    <application',1)
           p.write_text(s)
           PY
           grep -q 'android.permission.INTERNET' "$M"
@@ -112,9 +103,9 @@ jobs:
           p=Path('android/app/build.gradle'); s=p.read_text()
           if re.search(r'compileSdk\s*=\s*',s): s=re.sub(r'compileSdk\s*=\s*[^\n]+','compileSdk = 35',s,count=1)
           elif re.search(r'compileSdkVersion\s+',s): s=re.sub(r'compileSdkVersion\s+\S+','compileSdkVersion 35',s,count=1)
-          else: s=s.replace('android {','android {\n    compileSdkVersion 35',1)
-          if 'ndkVersion' in s: s=re.sub(r'ndkVersion\s*=\s*[^\n]+|ndkVersion\s+[^\n]+','ndkVersion = "27.0.12077973"',s,count=1)
-          else: s=s.replace('android {','android {\n    ndkVersion = "27.0.12077973"',1)
+          else:s=s.replace('android {','android {\n    compileSdkVersion 35',1)
+          if 'ndkVersion' in s:s=re.sub(r'ndkVersion\s*=\s*[^\n]+|ndkVersion\s+[^\n]+','ndkVersion = "27.0.12077973"',s,count=1)
+          else:s=s.replace('android {','android {\n    ndkVersion = "27.0.12077973"',1)
           p.write_text(s)
           PY
           grep -Eq 'ndkVersion.*27\.0\.12077973' android/app/build.gradle
@@ -136,12 +127,10 @@ jobs:
           from pathlib import Path
           import re,sys
           p=Path(sys.argv[1]); s=p.read_text()
-          s=re.sub(r'flutter\.[A-Za-z0-9_]*(compileSdk|minSdk|targetSdk)[A-Za-z0-9_]*', lambda m: {'compileSdk':'35','minSdk':'21','targetSdk':'35'}[m.group(1)], s)
-          s=re.sub(r'compileSdkVersion\s+flutter\.[A-Za-z0-9_]+','compileSdkVersion 35',s)
-          s=re.sub(r'minSdkVersion\s+flutter\.[A-Za-z0-9_]+','minSdkVersion 21',s)
-          s=re.sub(r'targetSdkVersion\s+flutter\.[A-Za-z0-9_]+','targetSdkVersion 35',s)
-          if 'compileSdkVersion' not in s and 'compileSdk' not in s: s=s.replace('android {','android {\n    compileSdkVersion 35',1)
-          if 'minSdkVersion' not in s and 'minSdk' not in s: s=s.replace('defaultConfig {','defaultConfig {\n        minSdkVersion 21',1)
+          s=re.sub(r'flutter\.[A-Za-z0-9_]*(compileSdk|minSdk|targetSdk)[A-Za-z0-9_]*',lambda m:{'compileSdk':'35','minSdk':'21','targetSdk':'35'}[m.group(1)],s)
+          s=re.sub(r'compileSdkVersion\s+flutter\.[A-Za-z0-9_]+','compileSdkVersion 35',s); s=re.sub(r'minSdkVersion\s+flutter\.[A-Za-z0-9_]+','minSdkVersion 21',s); s=re.sub(r'targetSdkVersion\s+flutter\.[A-Za-z0-9_]+','targetSdkVersion 35',s)
+          if 'compileSdkVersion' not in s and 'compileSdk' not in s:s=s.replace('android {','android {\n    compileSdkVersion 35',1)
+          if 'minSdkVersion' not in s and 'minSdk' not in s:s=s.replace('defaultConfig {','defaultConfig {\n        minSdkVersion 21',1)
           p.write_text(s)
           PY
 
@@ -190,17 +179,20 @@ jobs:
         working-directory: android
         run: ./gradlew :app:assembleRelease --stacktrace --no-daemon
 
-      - name: Locate APK output
+      - name: Locate APK output anywhere in workspace
         id: apk
         shell: bash
         run: |
           set -euo pipefail
-          echo 'Searching Gradle outputs:'
-          find android -type f \( -name '*.apk' -o -name '*.aab' \) -print
-          APK="$(find android -type f -name '*.apk' -path '*/outputs/*' -print -quit)"
+          echo 'Workspace APK/AAB files:'
+          find . -type f \( -name '*.apk' -o -name '*.aab' \) -print
+          APK="$(find . -type f -name '*.apk' -path '*/outputs/*' -print -quit)"
+          if [ -z "$APK" ]; then
+            APK="$(find . -type f -name '*.apk' -print -quit)"
+          fi
           test -n "$APK"
-          echo "path=$APK" >> "$GITHUB_OUTPUT"
           echo "Found APK: $APK"
+          echo "path=$APK" >> "$GITHUB_OUTPUT"
 
       - name: Verify and stage APK
         env:
@@ -210,8 +202,11 @@ jobs:
           set -euo pipefail
           cp "$APK_PATH" app-release.apk
           test -s app-release.apk
+          echo 'APK SHA-256:'
           sha256sum app-release.apk
+          echo 'APK size:'
           ls -lh app-release.apk
+          file app-release.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4

@@ -18,18 +18,27 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Set up Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: zulu
-          java-version: '17'
+      # Avoid codeload.github.com rate limits from setup-java/flutter-action.
+      # GitHub-hosted Ubuntu images already provide a Java 17 runtime; Flutter is
+      # downloaded directly from Google's official Flutter release storage.
+      - name: Verify Java 17
+        run: |
+          java -version
+          test "$(java -version 2>&1 | sed -n 's/.*version \"\([0-9]*\).*/\1/p' | head -n1)" = "17"
 
-      - name: Set up Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          flutter-version: '3.24.0'
-          cache: true
+      - name: Install Flutter 3.24.0 from official release storage
+        shell: bash
+        run: |
+          set -euo pipefail
+          FLUTTER_VERSION='3.24.0'
+          ARCHIVE="flutter_linux_${FLUTTER_VERSION}-stable.tar.xz"
+          URL="https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/${ARCHIVE}"
+          curl --fail --location --retry 5 --retry-delay 5 --retry-all-errors -o "/tmp/${ARCHIVE}" "$URL"
+          rm -rf "$HOME/flutter"
+          tar -xJf "/tmp/${ARCHIVE}" -C "$HOME"
+          echo "$HOME/flutter/bin" >> "$GITHUB_PATH"
+          echo "$HOME/flutter/bin/cache/dart-sdk/bin" >> "$GITHUB_PATH"
+          "$HOME/flutter/bin/flutter" --version
 
       - name: Validate prepare script syntax
         run: bash -n scripts/prepare_flutter_project.sh

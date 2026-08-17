@@ -129,27 +129,22 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [ -n "${PUB_CACHE:-}" ]; then
-            CACHE_DIR="$PUB_CACHE"
-          else
-            CACHE_DIR="$HOME/.pub-cache"
-          fi
+          if [ -n "${PUB_CACHE:-}" ]; then CACHE_DIR="$PUB_CACHE"; else CACHE_DIR="$HOME/.pub-cache"; fi
           CACHE_DIR="$(cd "$CACHE_DIR" 2>/dev/null && pwd || true)"
-          if [ -z "$CACHE_DIR" ]; then
-            echo 'ERROR: Pub cache directory could not be resolved.' >&2
-            exit 1
-          fi
+          test -n "$CACHE_DIR"
           echo "Using Pub cache: $CACHE_DIR"
-          WakelockGradle="$(find "$CACHE_DIR/hosted/pub.dev" -path '*/wakelock_plus-*/android/build.gradle' -type f -print -quit 2>/dev/null || true)"
+          WakelockGradle="$(find "$CACHE_DIR/hosted/pub.dev" -path '*/wakelock_plus-*/android/build.gradle' -type f -not -path '*/example/*' -print -quit 2>/dev/null || true)"
           echo "wakelock_gradle=$WakelockGradle" >> "$GITHUB_OUTPUT"
+          test -n "$WakelockGradle"
+          test -f "$WakelockGradle"
+          case "$WakelockGradle" in */example/*) echo 'ERROR: selected wakelock_plus example build.gradle' >&2; exit 1;; esac
 
-      - name: Patch wakelock_plus if needed
+      - name: Patch wakelock_plus root Android plugin
         env:
           WakelockGradle: ${{ steps.package-paths.outputs.wakelock_gradle }}
         shell: bash
         run: |
           set -euo pipefail
-          if [ -z "$WakelockGradle" ] || [ ! -f "$WakelockGradle" ]; then exit 0; fi
           python3 - "$WakelockGradle" <<'PY'
           from pathlib import Path
           import re, sys
@@ -158,6 +153,13 @@ jobs:
           s = re.sub(r'flutter\.[A-Za-z0-9_]*compileSdk[A-Za-z0-9_]*', '35', s)
           s = re.sub(r'flutter\.[A-Za-z0-9_]*minSdk[A-Za-z0-9_]*', '21', s)
           s = re.sub(r'flutter\.[A-Za-z0-9_]*targetSdk[A-Za-z0-9_]*', '35', s)
+          s = re.sub(r'compileSdkVersion\s+flutter\.[A-Za-z0-9_]+', 'compileSdkVersion 35', s)
+          s = re.sub(r'minSdkVersion\s+flutter\.[A-Za-z0-9_]+', 'minSdkVersion 21', s)
+          s = re.sub(r'targetSdkVersion\s+flutter\.[A-Za-z0-9_]+', 'targetSdkVersion 35', s)
+          if 'compileSdkVersion' not in s and 'compileSdk' not in s:
+              s = s.replace('android {', 'android {\n    compileSdkVersion 35', 1)
+          if 'minSdkVersion' not in s and 'minSdk' not in s:
+              s = s.replace('defaultConfig {', 'defaultConfig {\n        minSdkVersion 21', 1)
           p.write_text(s)
           PY
 
@@ -174,9 +176,8 @@ jobs:
           grep -q 'dev.flutter.flutter-gradle-plugin' android/app/build.gradle
           grep -q 'android.permission.INTERNET' android/app/src/main/AndroidManifest.xml
           grep -q 'android.permission.ACCESS_NETWORK_STATE' android/app/src/main/AndroidManifest.xml
-          if [ -n "$WakelockGradle" ] && [ -f "$WakelockGradle" ]; then
-            ! grep -Eq 'flutter\.[A-Za-z0-9_]+' "$WakelockGradle"
-          fi
+          ! grep -Eq 'flutter\.[A-Za-z0-9_]+' "$WakelockGradle"
+          grep -Eq 'compileSdkVersion[[:space:]]+35|compileSdk[[:space:]]*=[[:space:]]*35' "$WakelockGradle"
 
       - name: Analyze Dart code
         run: flutter analyze --no-fatal-infos

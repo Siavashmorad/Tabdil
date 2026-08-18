@@ -72,6 +72,14 @@ for path in root.rglob('*.dart'):
         return f"{m.group('prefix')}{m.group('quote')}package:{PACKAGE}/{destination}{m.group('quote')}{m.group('suffix')}"
     path.write_text(directive.sub(repl, text), encoding='utf-8')
 
+# The repository still contains legacy root Dart sources used as templates.
+# Normalize the generated Flutter tree so the APK can never compile against
+# the obsolete Tabdeal hostname.
+for path in root.rglob('*.dart'):
+    text = path.read_text(encoding='utf-8')
+    text = text.replace('https://api.tabdeal.org', 'https://api1.tabdeal.org')
+    path.write_text(text, encoding='utf-8')
+
 main = root / 'main.dart'
 main_text = main.read_text(encoding='utf-8')
 main_text = main_text.replace('static const _screens = [', 'static final _screens = [')
@@ -89,12 +97,21 @@ for path in root.rglob('*.dart'):
 if remaining:
     raise SystemExit('Local project Dart imports remain:\n' + '\n'.join(remaining))
 
+# Hard fail the build preparation if the obsolete host survived generation.
+old_host = []
+for path in root.rglob('*.dart'):
+    if 'api.tabdeal.org' in path.read_text(encoding='utf-8'):
+        old_host.append(str(path))
+if old_host:
+    raise SystemExit('Obsolete Tabdeal API hostname remains in generated Dart: ' + ', '.join(old_host))
+
 required = [root / p for p in CANONICAL.values()]
 missing = [str(p) for p in required if not p.is_file()]
 if missing:
     raise SystemExit('Missing generated Dart source(s): ' + ', '.join(missing))
 
 print(f'Canonical Flutter source tree prepared; normalized {changed} local Dart import(s).')
+print('Tabdeal API hostname verified: https://api1.tabdeal.org')
 PY
 
 find . -maxdepth 1 -type f -name '*.dart' -delete

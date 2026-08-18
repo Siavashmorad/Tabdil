@@ -15,10 +15,10 @@ class TabdealApiException implements Exception {
 
 /// Tabdeal REST API client.
 ///
-/// The official Tabdeal Postman environment uses https://api.tabdeal.org as
-/// the domain and the documented REST routes are under /r/api/v1.
+/// Tabdeal's reachable REST API hostname is api1.tabdeal.org.
+/// The documented REST routes are under /r/api/v1.
 class TabdealApiService {
-  static const String baseUrl = 'https://api.tabdeal.org/r/api/v1';
+  static const String baseUrl = 'https://api1.tabdeal.org/r/api/v1';
 
   final String? apiKey;
   final String? apiSecret;
@@ -100,10 +100,6 @@ class TabdealApiService {
     return _client.get(uri, headers: headers);
   }
 
-  // ---------------------------------------------------------------------
-  // Public endpoints
-  // ---------------------------------------------------------------------
-
   Future<bool> ping() async {
     final response = await _get(_publicUri('/ping'));
     _handleResponse(response);
@@ -158,8 +154,6 @@ class TabdealApiService {
     return data.whereType<Map>().map(Map<String, dynamic>.from).toList();
   }
 
-  /// Fetches candlesticks when the endpoint is available, otherwise rebuilds
-  /// recent candles from the documented public /trades endpoint.
   Future<List<Candle>> getKlines(
     String symbol, {
     String interval = '15m',
@@ -180,10 +174,7 @@ class TabdealApiService {
               .toList();
         }
       }
-    } catch (_) {
-      // Tabdeal's public documentation has historically not exposed klines;
-      // use trades as the reliable fallback.
-    }
+    } catch (_) {}
     return fetchRecentTradesAsCandles(
       symbol,
       bucketSeconds: _intervalToSeconds(interval),
@@ -244,10 +235,6 @@ class TabdealApiService {
     return candles;
   }
 
-  // ---------------------------------------------------------------------
-  // Authenticated endpoints
-  // ---------------------------------------------------------------------
-
   Future<Map<String, dynamic>> getAccount() async {
     final query = _buildSignedQuery({});
     final response = await _get(
@@ -269,8 +256,6 @@ class TabdealApiService {
     String? newClientOrderId,
   }) async {
     final params = <String, dynamic>{
-      // Tabdeal's authenticated examples use tabdealSymbol (e.g. BTC_IRT).
-      // Preserve the caller's symbol when it is already in that form.
       'tabdealSymbol': symbol.contains('_') ? symbol : symbol,
       'side': side == OrderSide.buy ? 'BUY' : 'SELL',
       'type': type == OrderType.market

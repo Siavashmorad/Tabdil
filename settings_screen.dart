@@ -82,7 +82,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
               child: Text(
                 'API Key و API Secret فقط روی گوشی و با flutter_secure_storage ذخیره می‌شوند. '
                 'دسترسی Withdraw را برای کلید API فعال نکنید. آدرس REST برنامه: '
-                'https://api1.tabdeal.org/r/api/v1',
+                'https://api1.tabdeal.org/r/api/v1\n\n'
+                'Build verification: API1-6419764',
                 textAlign: TextAlign.right,
               ),
             ),

@@ -19,11 +19,10 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up Java 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
-          cache: gradle
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
@@ -78,8 +77,7 @@ jobs:
         run: flutter pub get
 
       - name: Format check
-        run: |
-          dart format --output=none --set-exit-if-changed lib
+        run: dart format --output=none --set-exit-if-changed lib
 
       - name: Static analysis
         run: flutter analyze --no-fatal-infos
